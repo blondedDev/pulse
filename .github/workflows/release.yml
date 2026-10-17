@@ -1,0 +1,66 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  linux-x86_64:
+    name: Build linux-x86_64
+    runs-on: ubuntu-latest
+    container:
+      image: archlinux:latest
+      options: --user root
+
+    steps:
+      - name: Install build dependencies
+        run: |
+          pacman -Syu --noconfirm --needed \
+            base-devel rust cargo git nodejs npm \
+            pipewire alsa-lib clang cmake pkgconf \
+            libxkbcommon libxcb libx11 wayland
+
+      - uses: actions/checkout@v4
+
+      - name: Build the remote UI
+        run: |
+          if [ -f web/package.json ]; then
+            cd web && npm ci && npm run build
+          fi
+
+      - name: Build Pulse
+        run: cargo build --release -p pawse
+
+      - name: Package
+        run: |
+          mkdir -p dist
+          cp target/release/pulse dist/
+          cp LICENSE README.md dist/
+          cd dist
+          tar -czf "../pulse-${GITHUB_REF_NAME}-x86_64-linux.tar.gz" .
+          cd ..
+          sha256sum pulse-*.tar.gz > pulse-*.tar.gz.sha256
+
+      - name: Attach to release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            pulse-*.tar.gz
+            pulse-*.tar.gz.sha256
+          generate_release_notes: true
+          body: |
+            Prebuilt for **x86_64 Linux**.
+
+            ```sh
+            tar -xzf pulse-${{ github.ref_name }}-x86_64-linux.tar.gz
+            install -m 755 pulse ~/.local/bin/pulse
+            ```
+
+            Requires PipeWire with `pipewire-alsa`, plus `alsa-lib`,
+            `libxkbcommon` and `libxcb` at runtime.

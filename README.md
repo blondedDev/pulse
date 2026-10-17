@@ -1,78 +1,80 @@
-# Pulse
+<div align="center">
 
-A personal, local-first music player for Linux — one library, one listener, no
-account, no cloud.
+# 🎧 Pulse
 
-It runs as a single native window, indexes the music you already own, and does
-its best to stay out of the way while it plays.
+**A personal, local-first music player for Linux.**
+
+One library. One listener. No account, no cloud.
+
+</div>
 
 ---
 
-## Screenshots
+Pulse runs in a single native window, indexes the music you already own, and
+tries hard to stay out of the way while it plays.
 
-<p align="center">
-  <img src=".docs/screenshots/album.webp" width="49%" alt="Album view">
-  <img src=".docs/screenshots/cover_view.webp" width="49%" alt="Cover view">
-</p>
+## ✨ What it does
 
-<p align="center">
-  <img src=".docs/screenshots/settings.webp" width="49%" alt="Settings">
-  <img src=".docs/screenshots/remote-mobile.jpg" width="24%" alt="Remote on a phone">
-</p>
-
-## What it does
-
-**Library**
-- Indexes folders you choose, and keeps watching them: add a file and the
-  library catches up on its own.
-- Browses by **album**, **artist**, **genre**, **folder**, **playlist**, and one
+### 📚 Library
+- 🗂️ Indexes folders you choose — and keeps watching them, so new files appear
+  without a click.
+- 🎼 Browse by **album**, **artist**, **genre**, **folder**, **playlist**, or one
   flat **All Tracks** list.
-- Cue-sheet aware, with a small adoption layer so a re-rip or a moved folder
+- ⚡ **Ctrl+K** opens a command palette over everything.
+- 💿 Cue-sheet aware, with an adoption layer so a re-rip or a moved folder
   doesn't duplicate your play history.
-- **Ctrl+K** opens a command palette over tracks, albums, artists, genres and
-  playlists.
 
-**Playback**
-- Native sample rate through PipeWire, exclusively if you want it.
-- A real **play-next queue**: queue something and it plays next; queue more and
+### ▶️ Playback
+- 🔊 Native sample rate through PipeWire, exclusively if you want it.
+- ⏭️ A real **play-next queue** — queue a song and it plays next; queue more and
   they follow in the order you queued them.
-- Shuffle and repeat, an always-available **cover view**, and a now-playing bar
-  that stays honest about what is actually playing.
+- 🔀 Shuffle and repeat, an always-there **cover view**, and a now-playing bar
+  that tells the truth.
 
-**Editing**
-- **Tag editor** for a single track or a whole album, with cover art and raw tag
-  rows, followed by a rescan of what changed.
-- Lyrics: read embedded, `.lrc` sidecars, or fetched from LRCLIB on request —
-  and save what you fetched as a `.lrc` beside the track with one button.
+### ✏️ Editing
+- 🏷️ **Tag editor** for one track or a whole album, with cover art and raw tag
+  rows, followed by a rescan of exactly what changed.
+- 📝 Lyrics from embedded tags, `.lrc` sidecars, or LRCLIB on request — and one
+  button to save what you fetched as a `.lrc` beside the track.
 
-**Everything else**
-- **Rewind** — listening totals and your top artists, albums and tracks, over
-  all time or a rolling window.
-- **Data safety** — a daily rotated database backup, one-click restore, and an
-  integrity report that counts broken rows without deleting anything.
-- **Portable export** — copy the program and, optionally, your settings and
-  library into a folder that keeps its own data and runs anywhere.
+### 🧭 Extras
+- 📊 **Rewind** — listening totals and your top artists, albums and tracks.
+- 🛟 **Data safety** — daily rotated database backups, one-click restore, and an
+  integrity report that counts problems without deleting anything.
+- 📦 **Portable export** — copy the program, optionally with your settings and
+  library, into a folder that carries its own data.
 
-## Offline by default
+## 🔌 Offline by default
 
-Nothing touches the network unless you ask it to. Everything that needs the
-internet lives on one **Settings → Online** page and starts off:
+Nothing touches the network unless you ask. Everything online lives on one
+**Settings → Online** page and starts off:
 
 | Feature | Default |
 |---|---|
-| Lyrics from the internet (LRCLIB) | off |
-| Discord Rich Presence | off |
-| Remote control web server | off |
+| 🌐 Lyrics from the internet (LRCLIB) | off |
+| 🟣 Discord Rich Presence | off |
+| 📱 Remote control web server | off |
 
 No accounts, no analytics, no crash reporting, no scrobbling.
 
-## Requirements
+## 📋 Requirements
 
-- Linux, with PipeWire and `pipewire-alsa` running.
-- A Rust toolchain (stable).
-- The usual native build dependencies for a GPUI app on an Arch-based system.
+- 🐧 Linux with **PipeWire** and `pipewire-alsa`
+- 🦀 A Rust toolchain (to build from source)
+- 📚 `alsa-lib`, `libxkbcommon`, `libxcb` at runtime
 
-## Build and install
+## 📥 Install
+
+### Prebuilt binary
+
+Download the tarball from [Releases](../../releases), then:
+
+```sh
+tar -xzf pulse-*-x86_64-linux.tar.gz
+install -m 755 pulse ~/.local/bin/pulse
+```
+
+### From source
 
 ```sh
 cargo build --release -p pawse
@@ -82,30 +84,14 @@ install -m 755 target/release/pulse ~/.local/bin/pulse
 The crate is `pawse`; the binary it produces is `pulse`. That split is
 deliberate and is not going to be "fixed".
 
-The remote control UI in `web/` is a Svelte app embedded into the binary at
-build time — rebuild it after changing anything there:
+The remote UI in `web/` is a Svelte app embedded into the binary at build time —
+rebuild it after changing anything there:
 
 ```sh
 cd web && npm install && npm run build
 ```
 
-## Where things live
-
-| What | Path |
-|---|---|
-| Settings | `~/.config/pulse-music/settings.json` |
-| Library database | `~/.local/share/pulse-music/library.db` |
-| Backups | `~/.local/share/pulse-music/backups/` |
-| Logs | `~/.local/share/pulse-music/logs/` |
-| Cache (covers, artwork) | `~/.cache/pulse-music/` |
-
-The directory is `pulse-music` — never `~/.config/pulse`, which belongs to
-PipeWire-Pulse.
-
-Set **`PULSE_HOME`** to point all of the above at a single directory instead.
-That is what makes an exported copy independent of the machine it came from.
-
-## Keyboard
+## ⌨️ Keyboard
 
 | Key | Action |
 |---|---|
@@ -117,7 +103,31 @@ That is what makes an exported copy independent of the machine it came from.
 | `Q` | queue the hovered track to play next |
 | `Esc` | leave the cover view |
 
-## Layout
+## 📂 Where things live
+
+| What | Path |
+|---|---|
+| ⚙️ Settings | `~/.config/pulse-music/settings.json` |
+| 💾 Library database | `~/.local/share/pulse-music/library.db` |
+| 🛟 Backups | `~/.local/share/pulse-music/backups/` |
+| 📜 Logs | `~/.local/share/pulse-music/logs/` |
+| 🖼️ Cache (covers, artwork) | `~/.cache/pulse-music/` |
+
+The directory is `pulse-music` — never `~/.config/pulse`, which belongs to
+PipeWire-Pulse.
+
+Set **`PULSE_HOME`** to point all of the above at one directory. That is what
+makes an exported copy independent of the machine it came from.
+
+## 🛠️ Development
+
+```sh
+cargo test --workspace     # ~955 tests
+cargo clippy --workspace --all-targets
+```
+
+A release build takes a few minutes; a no-op incremental build is under a
+second.
 
 ```
 crates/
@@ -132,33 +142,21 @@ crates/
 web/                the remote UI (Svelte)
 ```
 
-Each crate has a `doc.md` next to its source with the design notes: what it does,
-why it does it that way, and the parts that look wrong but are load-bearing.
+Each crate has a `doc.md` next to its source with the design notes: what it
+does, why it does it that way, and the parts that look wrong but are
+load-bearing.
 
-## Development
-
-```sh
-cargo test --workspace     # ~955 tests
-cargo clippy --workspace --all-targets
-```
-
-A release build takes a few minutes; an incremental no-op build is under a
-second.
-
-## Notes
+## 📝 Notes
 
 - Crate and package names are still `pawse` / `pawse_remote`; only the product,
   the binary and the on-disk paths were renamed.
-- Track rows written by an older build may carry a `pawse-source://` locator.
-  It is recognised and treated as "no local file" rather than handed to the
+- Track rows written by an older build may carry a `pawse-source://` locator. It
+  is recognised and treated as "no local file" rather than handed to the
   decoder.
-- The database keeps a few tables from removed features as inert history. They
-  are never read or written, and no migration drops them, so an existing
-  library cannot lose data on upgrade.
-- Motion is optional by design: every animation has its own switch, and there is
-  a master switch. Turned off, the app is exactly as usable, just still.
+- Motion is optional by design: every animation has its own switch plus a master
+  switch. Turned off, the app is exactly as usable — just still.
 
-## License
+## 📄 License
 
 MIT — see [`LICENSE`](LICENSE).
 

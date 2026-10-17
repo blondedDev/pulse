@@ -1,0 +1,14 @@
+pub mod album_info;
+mod albums_grid;
+pub mod albums_view;
+pub mod artists_view;
+pub mod folders_view;
+pub(crate) mod fuzzy;
+pub mod genres_view;
+pub mod grouped_tracks_view;
+pub mod library_view;
+pub mod playlist_tracks_view;
+pub mod playlists_view;
+pub mod rewind_view;
+pub(crate) mod track_row;
+pub mod tracks_view;

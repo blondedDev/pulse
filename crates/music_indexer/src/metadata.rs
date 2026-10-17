@@ -1,0 +1,725 @@
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use std::sync::Mutex;
+
+use lofty::file::AudioFile;
+use lofty::picture::PictureType;
+use lofty::prelude::{Accessor, TaggedFileExt};
+use lofty::tag::{ItemKey, Tag};
+use music_library::{normalize_genres, sha256_hex};
+
+use crate::types::{CoverArt, IndexedLyrics, LyricsSource, ScannedTrack};
+
+/// Resolves a directory's external cover at most once per scan. Keyed by the
+/// track's parent dir, since [`find_external_cover_art`] depends only on it.
+/// Stores hashes (never bytes), so memory stays bounded over a large library:
+/// the first track in a dir reads + hashes the cover, siblings reference the
+/// hash and touch no disk.
+#[derive(Default)]
+pub(crate) struct CoverCache {
+    resolved: Mutex<HashMap<PathBuf, Option<String>>>,
+}
+
+impl CoverCache {
+    pub(crate) fn external_cover(&self, path: &Path) -> Option<CoverArt> {
+        let dir = path.parent()?.to_path_buf();
+        {
+            let map = self.resolved.lock().unwrap();
+            if let Some(cached) = map.get(&dir) {
+                return cached.clone().map(CoverArt::Cached);
+            }
+        }
+        let found = find_external_cover_art(path);
+        let hash = found.as_ref().map(|(b, _)| sha256_hex(b));
+        self.resolved.lock().unwrap().insert(dir, hash);
+        found.map(|(data, source_path)| CoverArt::Bytes {
+            data,
+            source_path,
+            embedded: false,
+        })
+    }
+}
+
+pub fn read_metadata(path: impl AsRef<Path>) -> anyhow::Result<ScannedTrack> {
+    read_metadata_inner(path.as_ref(), None)
+}
+
+pub(crate) fn read_metadata_cached(
+    path: &Path,
+    cache: &CoverCache,
+) -> anyhow::Result<ScannedTrack> {
+    read_metadata_inner(path, Some(cache))
+}
+
+fn read_year(tag: &Tag) -> Option<i32> {
+    [
+        ItemKey::RecordingDate,
+        ItemKey::Year,
+        ItemKey::OriginalReleaseDate,
+        ItemKey::ReleaseDate,
+    ]
+    .iter()
+    .find_map(|key| {
+        tag.get(key)
+            .and_then(|item| item.value().text())
+            .and_then(year_from_str)
+    })
+}
+
+fn year_from_str(value: &str) -> Option<i32> {
+    let digits: String = value
+        .trim_start()
+        .chars()
+        .take_while(|c| c.is_ascii_digit())
+        .take(4)
+        .collect();
+    if digits.len() == 4 {
+        digits.parse().ok()
+    } else {
+        None
+    }
+}
+
+fn is_dsd_extension(path: &Path) -> bool {
+    matches!(
+        path.extension()
+            .and_then(|e| e.to_str())
+            .map(|e| e.to_lowercase())
+            .as_deref(),
+        Some("dsf") | Some("dff")
+    )
+}
+
+/// lofty has no DSF/DFF support, so DSD tracks never reach the lofty path
+/// below — the `dsd` crate owns container parsing *and* tag reading for
+/// them, the same way it owns decoding for playback.
+fn read_dsd_metadata(path: &Path, cache: Option<&CoverCache>) -> anyhow::Result<ScannedTrack> {
+    let tags = dsd::read_tags(path)?;
+
+    let cover_art = match tags.cover_art {
+        Some(data) => Some(CoverArt::Bytes {
+            data,
+            source_path: path.to_path_buf(),
+            embedded: true,
+        }),
+        None => match cache {
+            Some(cache) => cache.external_cover(path),
+            None => find_external_cover_art(path).map(|(data, source_path)| CoverArt::Bytes {
+                data,
+                source_path,
+                embedded: false,
+            }),
+        },
+    };
+
+    Ok(ScannedTrack {
+        path: path.to_path_buf(),
+        title: tags.title,
+        artist_names: tags.artists,
+        album_artist_names: tags.album_artists,
+        album_title: tags.album,
+        track_number: tags.track_number,
+        disc_number: tags.disc_number,
+        year: tags.year,
+        genres: normalize_genres(tags.genres.iter().map(String::as_str)),
+        duration_ms: tags.duration_ms,
+        cover_art,
+        start_offset_ms: None,
+        bitrate: None,
+        is_cue: false,
+        lyrics: read_lyrics(path, None),
+    })
+}
+
+fn read_metadata_inner(path: &Path, cache: Option<&CoverCache>) -> anyhow::Result<ScannedTrack> {
+    if is_dsd_extension(path) {
+        return read_dsd_metadata(path, cache);
+    }
+
+    let tagged_file = lofty::read_from_path(path)?;
+
+    let properties = tagged_file.properties();
+    let duration_ms = properties.duration().as_millis() as u64;
+    let bitrate = properties.audio_bitrate();
+
+    let tag = tagged_file
+        .primary_tag()
+        .or_else(|| tagged_file.first_tag());
+
+    let mut title = None;
+    let mut artist_names = Vec::new();
+    let mut album_artist_names = Vec::new();
+    let mut album_title = None;
+    let mut track_number = None;
+    let mut disc_number = None;
+    let mut year = None;
+    let mut genres = Vec::new();
+    let mut embedded = None;
+    let mut embedded_lyrics = None;
+
+    if let Some(tag) = tag {
+        title = tag.title().map(|s| s.to_string());
+        album_title = tag.album().map(|s| s.to_string());
+
+        // Track artists: prefer all artists, fall back to main artist
+        let artists: Vec<String> = tag
+            .get_strings(&ItemKey::TrackArtists)
+            .map(|s| s.to_string())
+            .collect();
+        if !artists.is_empty() {
+            artist_names = artists;
+        } else if let Some(artist) = tag.artist() {
+            artist_names.push(artist.to_string());
+        }
+
+        // Album artists: prefer AlbumArtist tag, fall back to track artists
+        let album_artists: Vec<String> = tag
+            .get_strings(&ItemKey::AlbumArtist)
+            .map(|s| s.to_string())
+            .collect();
+        if !album_artists.is_empty() {
+            album_artist_names = album_artists;
+        }
+
+        // Track number
+        if let Some(item) = tag.get(&ItemKey::TrackNumber)
+            && let Some(val) = item.value().text()
+        {
+            track_number = val.split('/').next().and_then(|s| s.parse().ok());
+        }
+
+        // Disc number
+        if let Some(item) = tag.get(&ItemKey::DiscNumber)
+            && let Some(val) = item.value().text()
+        {
+            disc_number = val.split('/').next().and_then(|s| s.parse().ok());
+        }
+
+        year = read_year(tag);
+        genres = normalize_genres(tag.get_strings(&ItemKey::Genre));
+
+        embedded = embedded_cover(tag);
+
+        embedded_lyrics = tag
+            .get(&ItemKey::Lyrics)
+            .and_then(|item| item.value().text())
+            .map(|s| s.to_string());
+    }
+
+    let lyrics = read_lyrics(path, embedded_lyrics);
+
+    let cover_art = match embedded {
+        Some(data) => Some(CoverArt::Bytes {
+            data,
+            source_path: path.to_path_buf(),
+            embedded: true,
+        }),
+        None => match cache {
+            Some(cache) => cache.external_cover(path),
+            None => find_external_cover_art(path).map(|(data, source_path)| CoverArt::Bytes {
+                data,
+                source_path,
+                embedded: false,
+            }),
+        },
+    };
+
+    Ok(ScannedTrack {
+        path: path.to_path_buf(),
+        title,
+        artist_names,
+        album_artist_names,
+        album_title,
+        track_number,
+        disc_number,
+        year,
+        genres,
+        duration_ms: Some(duration_ms),
+        cover_art,
+        start_offset_ms: None,
+        bitrate,
+        is_cue: false,
+        lyrics,
+    })
+}
+
+pub(crate) fn read_sidecar_lrc(audio_path: &Path) -> Option<String> {
+    let lrc_path = audio_path.with_extension("lrc");
+    let bytes = std::fs::read(&lrc_path).ok()?;
+    let text = match String::from_utf8(bytes) {
+        Ok(s) => s,
+        Err(e) => String::from_utf8_lossy(e.as_bytes()).into_owned(),
+    };
+    if text.trim().is_empty() {
+        None
+    } else {
+        Some(text)
+    }
+}
+
+fn read_lyrics(audio_path: &Path, embedded: Option<String>) -> Vec<IndexedLyrics> {
+    let mut found = Vec::new();
+    if let Some(text) = read_sidecar_lrc(audio_path) {
+        found.push(IndexedLyrics {
+            text,
+            source: LyricsSource::Lrc,
+        });
+    }
+    if let Some(text) = embedded.filter(|text| !text.trim().is_empty()) {
+        found.push(IndexedLyrics {
+            text,
+            source: LyricsSource::Embedded,
+        });
+    }
+    found
+}
+
+pub(crate) fn embedded_cover(tag: &Tag) -> Option<Vec<u8>> {
+    tag.pictures()
+        .iter()
+        .find(|p| p.pic_type() == PictureType::CoverFront)
+        .or_else(|| tag.pictures().first())
+        .map(|pic| pic.data().to_vec())
+}
+
+pub fn extract_embedded_cover(path: &Path) -> Option<Vec<u8>> {
+    let tagged_file = lofty::read_from_path(path).ok()?;
+    tagged_file
+        .primary_tag()
+        .or_else(|| tagged_file.first_tag())
+        .and_then(embedded_cover)
+}
+
+pub fn extract_cover_art(path: &Path) -> Option<Vec<u8>> {
+    extract_embedded_cover(path).or_else(|| find_external_cover_art(path).map(|(data, _)| data))
+}
+
+pub fn load_cover_from_source(
+    source: Option<(String, bool)>,
+    track_path: Option<&str>,
+) -> Option<Vec<u8>> {
+    match source {
+        Some((path, true)) => extract_embedded_cover(Path::new(&path)),
+        Some((path, false)) => std::fs::read(path).ok(),
+        None => None,
+    }
+    .or_else(|| track_path.and_then(|p| extract_cover_art(Path::new(p))))
+}
+
+pub fn find_external_cover_art(path: &Path) -> Option<(Vec<u8>, PathBuf)> {
+    let dir = path.parent()?;
+
+    // 1. Track's own directory (e.g. CD1/, CD2/)
+    if let Some(found) = find_cover_art_in_dir(dir) {
+        return Some(found);
+    }
+
+    // 2. Named artwork subdirectories under track's directory
+    if let Some(found) = find_cover_in_subdirs(dir) {
+        return Some(found);
+    }
+
+    // 3. Parent directory (album root) — common for multi-disc albums
+    if let Some(parent) = dir.parent() {
+        if let Some(found) = find_cover_art_in_dir(parent) {
+            return Some(found);
+        }
+
+        // 4. Named artwork subdirectories under parent directory
+        if let Some(found) = find_cover_in_subdirs(parent) {
+            return Some(found);
+        }
+    }
+
+    None
+}
+
+const ARTWORK_DIR_NAMES: &[&str] = &[
+    "artwork", "art", "covers", "scans", "images", "img", "pics", "folder", "booklet",
+];
+
+fn find_cover_in_subdirs(dir: &Path) -> Option<(Vec<u8>, PathBuf)> {
+    for entry in std::fs::read_dir(dir).ok()? {
+        let entry = entry.ok()?;
+        if !entry.file_type().ok()?.is_dir() {
+            continue;
+        }
+        let name = entry.file_name().to_string_lossy().to_lowercase();
+        if !ARTWORK_DIR_NAMES.contains(&name.as_str()) {
+            continue;
+        }
+        if let Some(found) = find_cover_art_in_dir(&entry.path()) {
+            return Some(found);
+        }
+    }
+    None
+}
+
+fn find_cover_art_in_dir(dir: &Path) -> Option<(Vec<u8>, PathBuf)> {
+    let mut files: Vec<(String, u64, PathBuf)> = Vec::new();
+    for entry in std::fs::read_dir(dir).ok()? {
+        let entry = entry.ok()?;
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if !is_cover_image_name(&name) {
+            continue;
+        }
+        let size = entry.metadata().map(|m| m.len()).unwrap_or(0);
+        files.push((name, size, entry.path()));
+    }
+    let named: Vec<(&str, u64)> = files
+        .iter()
+        .map(|(name, size, _)| (name.as_str(), *size))
+        .collect();
+    let best = best_cover_name(&named)?;
+    let path = files.swap_remove(best).2;
+    std::fs::read(&path).ok().map(|data| (data, path))
+}
+
+pub const COVER_IMAGE_EXTENSIONS: &[&str] = &["jpg", "jpeg", "png"];
+
+pub fn is_cover_image_name(name: &str) -> bool {
+    name.rsplit_once('.')
+        .is_some_and(|(_, ext)| COVER_IMAGE_EXTENSIONS.contains(&ext.to_ascii_lowercase().as_str()))
+}
+
+pub fn is_artwork_dir_name(name: &str) -> bool {
+    ARTWORK_DIR_NAMES.contains(&name.to_lowercase().as_str())
+}
+
+pub fn best_cover_name(files: &[(&str, u64)]) -> Option<usize> {
+    let prefixes = ["cover", "folder", "front", "album", "art"];
+    let negative = [
+        "back", "rear", "inside", "booklet", "disc", "cd", "inlay", "tray", "label", "matrix",
+        "scan", "photo", "poster",
+    ];
+    let mut candidates = Vec::new();
+    let mut fallback = Vec::new();
+
+    for (ix, (name, size)) in files.iter().enumerate() {
+        let lossy = name.to_lowercase();
+        let (stem, ext) = lossy.rsplit_once('.').unwrap_or((&lossy, ""));
+        if !COVER_IMAGE_EXTENSIONS.contains(&ext) {
+            continue;
+        }
+
+        // RED/OPS tracker naming convention (e.g. 2007-WIGCD188J-HSE10043_01.jpg):
+        // files ending with _1, _01, _001 etc. are numbered sequentially;
+        // _1 / _01 / _001 is always the front cover and takes the highest priority.
+        let is_red_ops_front = stem
+            .rsplit_once('_')
+            .and_then(|(_, suffix)| suffix.parse::<u32>().ok())
+            == Some(1);
+
+        // Negative keyword matching uses word boundaries (non-alphanumeric or string
+        // start/end), NOT simple substring. This avoids false positives like "cd" matching
+        // inside catalog numbers (e.g. WIGCD188J), while still matching standalone tokens
+        // like "cd.jpg", "CD.png", "back_cover.jpg".
+        let is_negative = negative.iter().any(|&n| contains_word(stem, n));
+
+        let mut priority = None;
+        for (idx, &prefix) in prefixes.iter().enumerate() {
+            if stem.starts_with(prefix) {
+                priority = Some(idx as i32);
+                break;
+            }
+        }
+
+        if let Some(mut priority) = priority {
+            if is_negative {
+                priority += 100;
+            }
+            if is_red_ops_front {
+                priority -= 50;
+            }
+            candidates.push((priority, ix));
+        } else if is_red_ops_front {
+            candidates.push((-50, ix));
+        } else if !is_negative {
+            fallback.push((*size, ix));
+        }
+    }
+
+    if !candidates.is_empty() {
+        candidates.sort_by_key(|(p, _)| *p);
+        return candidates.first().map(|(_, ix)| *ix);
+    }
+
+    fallback.sort_by_key(|(size, _)| std::cmp::Reverse(*size));
+    fallback.first().map(|(_, ix)| *ix)
+}
+
+fn contains_word(haystack: &str, needle: &str) -> bool {
+    haystack.match_indices(needle).any(|(start, _)| {
+        let end = start + needle.len();
+        let left_bound = start == 0 || { !haystack.as_bytes()[start - 1].is_ascii_alphanumeric() };
+        let right_bound =
+            end == haystack.len() || { !haystack.as_bytes()[end].is_ascii_alphanumeric() };
+        left_bound && right_bound
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{contains_word, find_external_cover_art, load_cover_from_source, read_sidecar_lrc};
+    use crate::types::LyricsSource;
+    use std::path::PathBuf;
+    use std::sync::atomic::{AtomicU32, Ordering};
+
+    struct TempDir {
+        path: PathBuf,
+    }
+
+    impl TempDir {
+        fn new() -> Self {
+            static COUNTER: AtomicU32 = AtomicU32::new(0);
+            let id = COUNTER.fetch_add(1, Ordering::Relaxed);
+            let path =
+                std::env::temp_dir().join(format!("pulse_meta_test_{}_{}", std::process::id(), id));
+            std::fs::create_dir_all(&path).unwrap();
+            Self { path }
+        }
+    }
+
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.path);
+        }
+    }
+
+    /// The distinction the tag editor's cover preview rests on. A file whose art was
+    /// found *next to it* carries no picture of its own, so `extract_embedded_cover`
+    /// says so while `read_metadata` still reports art — with `embedded: false`. Showing
+    /// the latter in a tag editor would claim a tag the file does not have, and Remove
+    /// would then appear to do something and change nothing.
+    #[test]
+    fn an_external_cover_is_reported_as_art_but_not_as_an_embedded_picture() {
+        let tmp = TempDir::new();
+        let manifest = std::env::var("CARGO_MANIFEST_DIR").unwrap();
+        let fixtures = PathBuf::from(manifest).join("../../fixtures");
+        let track = tmp.path.join("track.flac");
+        std::fs::copy(fixtures.join("tagged_basic.flac"), &track).unwrap();
+        std::fs::copy(fixtures.join("cover_front.png"), tmp.path.join("cover.png")).unwrap();
+
+        assert!(
+            super::extract_embedded_cover(&track).is_none(),
+            "the fixture has no picture of its own"
+        );
+        assert!(matches!(
+            super::read_metadata(&track).unwrap().cover_art,
+            Some(crate::types::CoverArt::Bytes {
+                embedded: false,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn find_external_cover_art_returns_source_path() {
+        let tmp = TempDir::new();
+        let cover_path = tmp.path.join("cover.jpg");
+        std::fs::write(&cover_path, b"jpegbytes").unwrap();
+        let track = tmp.path.join("track.flac");
+
+        let (data, path) = find_external_cover_art(&track).unwrap();
+        assert_eq!(data, b"jpegbytes");
+        assert_eq!(path, cover_path);
+    }
+
+    #[test]
+    fn load_cover_from_external_source_path() {
+        let tmp = TempDir::new();
+        let cover_path = tmp.path.join("art.jpg");
+        std::fs::write(&cover_path, b"external").unwrap();
+
+        let source = Some((cover_path.to_string_lossy().into_owned(), false));
+        assert_eq!(load_cover_from_source(source, None).unwrap(), b"external");
+    }
+
+    #[test]
+    fn load_cover_falls_back_to_track_dir_when_source_missing() {
+        let tmp = TempDir::new();
+        std::fs::write(tmp.path.join("cover.jpg"), b"fallback").unwrap();
+        let track = tmp.path.join("track.flac");
+        std::fs::write(&track, b"").unwrap();
+
+        let gone = tmp.path.join("deleted.jpg");
+        let source = Some((gone.to_string_lossy().into_owned(), false));
+        let track_path = track.to_string_lossy().into_owned();
+        assert_eq!(
+            load_cover_from_source(source, Some(&track_path)).unwrap(),
+            b"fallback"
+        );
+    }
+
+    #[test]
+    fn load_cover_falls_back_when_embedded_extraction_fails() {
+        let tmp = TempDir::new();
+        std::fs::write(tmp.path.join("cover.jpg"), b"fallback").unwrap();
+        let not_audio = tmp.path.join("track.flac");
+        std::fs::write(&not_audio, b"not really audio").unwrap();
+
+        let source = Some((not_audio.to_string_lossy().into_owned(), true));
+        let track_path = not_audio.to_string_lossy().into_owned();
+        assert_eq!(
+            load_cover_from_source(source, Some(&track_path)).unwrap(),
+            b"fallback"
+        );
+    }
+
+    #[test]
+    fn load_cover_none_without_source_or_track() {
+        assert!(load_cover_from_source(None, None).is_none());
+    }
+
+    #[test]
+    fn test_contains_word_at_start() {
+        assert!(contains_word("cd_cover", "cd"));
+    }
+
+    #[test]
+    fn test_contains_word_at_end() {
+        assert!(contains_word("back_cover_cd", "cd"));
+    }
+
+    #[test]
+    fn test_contains_word_in_middle() {
+        assert!(contains_word("back_cd_cover", "cd"));
+    }
+
+    #[test]
+    fn test_contains_word_entire_string() {
+        assert!(contains_word("cd", "cd"));
+    }
+
+    #[test]
+    fn test_contains_word_not_found() {
+        assert!(!contains_word("front_cover", "cd"));
+    }
+
+    #[test]
+    fn test_contains_word_substring_without_boundary() {
+        assert!(!contains_word("WIGCD188J_front", "cd"));
+        assert!(!contains_word("abcd", "bc"));
+        assert!(!contains_word("abcdef", "cde"));
+    }
+
+    #[test]
+    fn test_contains_word_multiple_occurrences_one_has_boundary() {
+        assert!(contains_word("cd_WIGCD188J", "cd"));
+    }
+
+    #[test]
+    fn test_contains_word_empty_haystack() {
+        assert!(!contains_word("", "test"));
+    }
+
+    #[test]
+    fn test_contains_word_empty_needle() {
+        assert!(!contains_word("test", ""));
+    }
+
+    #[test]
+    fn test_contains_word_single_char_word_boundary() {
+        assert!(contains_word("a_b", "a"));
+        assert!(contains_word("a_b", "b"));
+        assert!(!contains_word("ab_c", "b"));
+    }
+
+    #[test]
+    fn read_sidecar_lrc_reads_sibling_with_same_stem() {
+        let tmp = TempDir::new();
+        let track = tmp.path.join("track.flac");
+        std::fs::write(&track, b"").unwrap();
+        std::fs::write(tmp.path.join("track.lrc"), "[00:01.00]hello").unwrap();
+
+        assert_eq!(read_sidecar_lrc(&track).as_deref(), Some("[00:01.00]hello"));
+    }
+
+    #[test]
+    fn read_sidecar_lrc_none_without_file() {
+        let tmp = TempDir::new();
+        let track = tmp.path.join("track.flac");
+        std::fs::write(&track, b"").unwrap();
+
+        assert!(read_sidecar_lrc(&track).is_none());
+    }
+
+    #[test]
+    fn read_sidecar_lrc_none_when_empty() {
+        let tmp = TempDir::new();
+        let track = tmp.path.join("track.flac");
+        std::fs::write(&track, b"").unwrap();
+        std::fs::write(tmp.path.join("track.lrc"), "   \n\n").unwrap();
+
+        assert!(read_sidecar_lrc(&track).is_none());
+    }
+
+    #[test]
+    fn timestamped_sidecar_lrc_yields_lrc_source() {
+        let tmp = TempDir::new();
+        let track = tmp.path.join("track.flac");
+        std::fs::write(&track, b"").unwrap();
+        std::fs::write(tmp.path.join("track.lrc"), "[00:01.00]a\n[00:02.00]b").unwrap();
+
+        let parsed = super::read_lyrics(&track, None);
+        assert_eq!(parsed.len(), 1);
+        assert_eq!(parsed[0].source, LyricsSource::Lrc);
+        assert_eq!(parsed[0].text, "[00:01.00]a\n[00:02.00]b");
+    }
+
+    #[test]
+    fn plain_sidecar_lrc_yields_lrc_source() {
+        let tmp = TempDir::new();
+        let track = tmp.path.join("track.flac");
+        std::fs::write(&track, b"").unwrap();
+        std::fs::write(tmp.path.join("track.lrc"), "first line\nsecond line").unwrap();
+
+        let parsed = super::read_lyrics(&track, None);
+        assert_eq!(parsed.len(), 1);
+        assert_eq!(parsed[0].source, LyricsSource::Lrc);
+        assert_eq!(parsed[0].text, "first line\nsecond line");
+    }
+
+    #[test]
+    fn sidecar_lrc_and_embedded_are_both_kept() {
+        let tmp = TempDir::new();
+        let track = tmp.path.join("track.flac");
+        std::fs::write(&track, b"").unwrap();
+        std::fs::write(tmp.path.join("track.lrc"), "[00:01.00]from sidecar").unwrap();
+
+        let parsed = super::read_lyrics(&track, Some("from embedded tag".to_string()));
+        assert_eq!(parsed.len(), 2);
+        assert_eq!(parsed[0].source, LyricsSource::Lrc);
+        assert_eq!(parsed[0].text, "[00:01.00]from sidecar");
+        assert_eq!(parsed[1].source, LyricsSource::Embedded);
+        assert_eq!(parsed[1].text, "from embedded tag");
+    }
+
+    #[test]
+    fn embedded_lyrics_used_when_no_sidecar() {
+        let tmp = TempDir::new();
+        let track = tmp.path.join("track.flac");
+        std::fs::write(&track, b"").unwrap();
+
+        let parsed = super::read_lyrics(&track, Some("plain embedded".to_string()));
+        assert_eq!(parsed.len(), 1);
+        assert_eq!(parsed[0].source, LyricsSource::Embedded);
+        assert_eq!(parsed[0].text, "plain embedded");
+    }
+
+    #[test]
+    fn no_lyrics_when_neither_present() {
+        let tmp = TempDir::new();
+        let track = tmp.path.join("track.flac");
+        std::fs::write(&track, b"").unwrap();
+
+        assert!(super::read_lyrics(&track, None).is_empty());
+        assert!(super::read_lyrics(&track, Some("   ".to_string())).is_empty());
+    }
+
+    #[test]
+    fn lyrics_source_as_str_matches_db_strings() {
+        assert_eq!(LyricsSource::Lrc.as_str(), "lrc");
+        assert_eq!(LyricsSource::Embedded.as_str(), "embedded");
+    }
+}

@@ -1,0 +1,95 @@
+use std::path::PathBuf;
+use std::rc::Rc;
+use std::time::Duration;
+
+use crate::{AudioEngine, EngineEvent};
+use gpui::App;
+
+pub struct EngineManager {
+    audio_engine: Rc<AudioEngine>,
+    _event_sender: flume::Sender<EngineEvent>,
+    _event_receiver: flume::Receiver<EngineEvent>,
+}
+
+impl EngineManager {
+    pub fn new(audio_engine: Rc<AudioEngine>) -> Self {
+        let (event_sender, event_receiver) = flume::bounded(64);
+
+        Self {
+            audio_engine,
+            _event_sender: event_sender,
+            _event_receiver: event_receiver,
+        }
+    }
+
+    pub fn start(self, cx: &mut App) -> Self {
+        let rx = self.audio_engine.events();
+        let tx = self._event_sender.clone();
+
+        cx.spawn(async move |_| {
+            while let Ok(event) = rx.recv_async().await {
+                match event.clone() {
+                    EngineEvent::Error(err) => {
+                        log::error!("{err}");
+                    }
+                    EngineEvent::PositionChanged(_) => {}
+                    _ => {
+                        log::trace!("EngineManager received event: {:?}", event)
+                    }
+                };
+
+                if tx.send(event).is_err() {
+                    break;
+                }
+            }
+        })
+        .detach();
+        self
+    }
+
+    pub fn play(&self) {
+        self.audio_engine.play();
+    }
+
+    pub fn commander(&self) -> crate::EngineCommander {
+        self.audio_engine.commander()
+    }
+
+    pub fn play_gapless(&self) {
+        self.audio_engine.play_gapless();
+    }
+
+    pub fn pause(&self) {
+        self.audio_engine.pause();
+    }
+
+    pub fn seek(&self, position: f32) {
+        self.audio_engine.seek(position);
+    }
+
+    pub fn stop(&self) {
+        self.audio_engine.stop();
+    }
+
+    pub fn set_track(&self, path: PathBuf) {
+        self.audio_engine.set_track(path);
+    }
+
+    pub fn set_track_with_offset(
+        &self,
+        path: PathBuf,
+        start_offset: Option<Duration>,
+        track_duration: Option<Duration>,
+    ) {
+        self.audio_engine
+            .set_track_with_offset(path, start_offset, track_duration);
+    }
+
+    pub fn events(&self) -> &flume::Receiver<EngineEvent> {
+        &self._event_receiver
+    }
+
+    pub fn shutdown(&self) {
+        self.audio_engine.shutdown();
+    }
+}

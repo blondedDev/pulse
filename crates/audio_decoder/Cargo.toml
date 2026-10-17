@@ -1,0 +1,22 @@
+[package]
+name = "audio_decoder"
+version.workspace = true
+edition.workspace = true
+publish = false
+
+[dependencies]
+audio_common = { path = "../audio_common" }
+anyhow = { workspace = true }
+symphonia = { version = "0.6", features = ["all"] }
+symphonia-adapter-libopus = "0.3"
+ape-decoder = "0.3.2"
+dsd = { path = "../dsd" }
+
+[dev-dependencies]
+rstest = "0.26"
+
+[lib]
+path = "src/decoder.rs"
+
+[lints]
+workspace = true

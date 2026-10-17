@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none">
+  speaker / output device with a chevron indicating picker 
+      <rect x="5" y="3.5" width="10" height="17" rx="1.8" fill="none" stroke="currentColor" stroke-width="1.7">
+  </rect>
+      <circle cx="10" cy="14" r="3" fill="none" stroke="currentColor" stroke-width="1.7">
+  </circle>
+      <circle cx="10" cy="7" r="1" fill="currentColor">
+  </circle>
+      <path d="m17 10 2.5 2L17 14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+  </path>
+</svg>

@@ -1,0 +1,598 @@
+use std::collections::HashMap;
+use std::rc::Rc;
+use std::sync::Arc;
+
+use audio_engine::EngineEvent;
+use gpui::prelude::FluentBuilder;
+use gpui::{
+    AnyElement, AppContext, ClickEvent, Context, Div, ElementId, FontWeight, Hsla, Image,
+    InteractiveElement, IntoElement, ObjectFit, ParentElement, Pixels, Render, SharedString, Size,
+    StatefulInteractiveElement, Styled, StyledImage, Subscription, Window, div, img, point, px,
+    rems,
+};
+use gpui_component::{
+    VirtualListScrollHandle, h_flex,
+    scroll::{ScrollableElement, ScrollbarAxis},
+    v_flex, v_virtual_list,
+};
+
+use crate::cover_art_cache::CoverArtCache;
+use crate::theme_colors::Colors;
+use crate::track_list::{
+    ROW_HOVER_GROUP, RowButtonColors, TrackRowBase, add_to_playlist_button,
+    track_duration,
+};
+use ui_components::cover_placeholder::cover_placeholder;
+
+use crate::library_service::LibraryEvent;
+use crate::library_views::track_row::build_artist_map;
+use crate::localization::tr;
+use crate::panel_header::{panel_header, panel_header_actions, panel_header_button};
+use crate::playback_queue::RemoveOutcome;
+use crate::playlist_popup::OpenAddToPlaylist;
+use crate::services::Services;
+use crate::settings_store::SettingsStore;
+
+#[derive(Clone)]
+struct DraggedQueueTrack {
+    from_ix: usize,
+    title: SharedString,
+}
+
+impl Render for DraggedQueueTrack {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .px_3()
+            .py_1()
+            .rounded_md()
+            .bg(Colors::popover(cx))
+            .text_color(Colors::popover_foreground(cx))
+            .border_1()
+            .border_color(Colors::border(cx))
+            .text_sm()
+            .opacity(0.9)
+            .child(self.title.clone())
+    }
+}
+
+#[derive(Clone, Copy)]
+struct QueueRowParams {
+    muted: Hsla,
+    muted_fg: Hsla,
+    border: Hsla,
+    accent: Hsla,
+    list_hover: Hsla,
+    playlists_enabled: bool,
+    show_track_duration: bool,
+    show_queue_actions: bool,
+    show_queue_artist: bool,
+    item_height: f32,
+    cover_size: f32,
+    buttons: RowButtonColors,
+}
+
+impl QueueRowParams {
+    fn from_cx(cx: &mut Context<QueueView>) -> Self {
+        let settings = cx.global::<SettingsStore>();
+        let show_queue_artist = settings.show_queue_artist();
+        let rem = f32::from(settings.font_scale().px());
+        Self {
+            muted: Colors::muted(cx),
+            muted_fg: Colors::muted_foreground(cx),
+            border: Colors::border(cx),
+            accent: Colors::accent(cx),
+            list_hover: Colors::list_hover(cx),
+            playlists_enabled: settings.playlists_enabled(),
+            show_track_duration: settings.show_track_duration(),
+            show_queue_actions: settings.show_queue_actions(),
+            show_queue_artist,
+            item_height: if show_queue_artist {
+                rem * 3.0
+            } else {
+                rem * 2.25
+            } + 1.,
+            cover_size: if show_queue_artist {
+                rem * 2.0
+            } else {
+                rem * 1.5
+            },
+            buttons: RowButtonColors::from_cx(cx),
+        }
+    }
+}
+
+struct Track {
+    base: TrackRowBase,
+    artist: SharedString,
+    cover: Option<Arc<Image>>,
+}
+
+impl Track {
+    pub fn from_library_track(
+        src: &music_library::Track,
+        artist_by_track: &HashMap<i64, SharedString>,
+        cover_art_cache: &mut CoverArtCache,
+        library: &crate::library_service::LibraryService,
+    ) -> Self {
+        Self {
+            base: TrackRowBase::from_track(src),
+            artist: artist_by_track.get(&src.id).cloned().unwrap_or_default(),
+            cover: cover_art_cache.get_small(src.cover_art_id, library),
+        }
+    }
+}
+
+pub struct QueueView {
+    tracks: Vec<Track>,
+    current_index: Option<usize>,
+    is_playing: bool,
+    visible: bool,
+    item_sizes: Rc<Vec<Size<Pixels>>>,
+    scroll_handle: VirtualListScrollHandle,
+    _subscription: Subscription,
+    _status_subscription: Subscription,
+    _library_subscription: Subscription,
+}
+
+impl QueueView {
+    pub fn new(_window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let services = cx.global::<Services>();
+        let engine_event_bus = services.engine_event_bus.clone();
+        let library_event_bus = services.library_event_bus.clone();
+        let is_playing = services
+            .is_playing
+            .load(std::sync::atomic::Ordering::Relaxed);
+
+        let subscription =
+            cx.subscribe(
+                &engine_event_bus,
+                |this, _, event: &EngineEvent, cx| match event {
+                    EngineEvent::Playing if !this.is_playing => {
+                        this.is_playing = true;
+                        cx.notify();
+                    }
+                    EngineEvent::Paused if this.is_playing => {
+                        this.is_playing = false;
+                        cx.notify();
+                    }
+                    EngineEvent::TrackEnded if this.is_playing => {
+                        this.is_playing = false;
+                        cx.notify();
+                    }
+                    EngineEvent::Stopped => {
+                        this.is_playing = false;
+                        cx.notify();
+                    }
+                    _ => {}
+                },
+            );
+
+        let playback_status = cx.global::<Services>().playback_status.clone();
+        let status_subscription = cx.subscribe(
+            &playback_status,
+            |this, status, event: &crate::playback_status::StatusChanged, cx| {
+                let loading = status.read(cx).phase() != crate::playback_status::Phase::Idle;
+                if event.track_changed || loading {
+                    this.refresh_tracks(cx);
+                    if this.visible {
+                        this.scroll_current_into_view();
+                    }
+                    cx.notify();
+                }
+            },
+        );
+
+        let library_subscription =
+            cx.subscribe(&library_event_bus, |this, _, event: &LibraryEvent, cx| {
+                match event {
+                    LibraryEvent::PlaylistTracksChanged { .. } => {
+                        // Services has already synced the queue if it was
+                        // backed by this playlist; refresh our snapshot.
+                        this.refresh_tracks(cx);
+                    }
+                    LibraryEvent::QueueChanged => {
+                        // Deliberately no auto-scroll. Scroll to the last row on
+                        // every change and the queue jumps to its own end the
+                        // moment you queue something, which loses your place
+                        // (and looks like the panel is scrolling on its own).
+                        this.refresh_tracks(cx);
+                    }
+                    LibraryEvent::CatalogChanged => {
+                        this.rebuild_tracks(cx);
+                    }
+                    _ => {}
+                }
+            });
+
+        let mut result = Self {
+            tracks: Vec::new(),
+            current_index: None,
+            is_playing,
+            visible: false,
+            scroll_handle: VirtualListScrollHandle::new(),
+            _subscription: subscription,
+            _status_subscription: status_subscription,
+            _library_subscription: library_subscription,
+            item_sizes: Rc::new(Vec::new()),
+        };
+        result.refresh_tracks(cx);
+        result
+    }
+
+    pub fn set_visible(&mut self, visible: bool) {
+        self.visible = visible;
+        if visible {
+            self.scroll_current_into_view();
+        }
+    }
+
+    fn scroll_current_into_view(&self) {
+        if let Some(ix) = self.current_index {
+            self.scroll_handle
+                .scroll_to_item(ix, gpui::ScrollStrategy::Top);
+        }
+    }
+
+    pub fn refresh_tracks(&mut self, cx: &mut Context<Self>) {
+        self.load_tracks(false, cx);
+    }
+
+    fn rebuild_tracks(&mut self, cx: &mut Context<Self>) {
+        self.load_tracks(true, cx);
+    }
+
+    fn load_tracks(&mut self, force: bool, cx: &mut Context<Self>) {
+        let services = cx.global::<Services>();
+        let queue = services.playback_queue.borrow();
+        let new_tracks = queue.tracks_vec();
+        let new_index = queue.current_index();
+        drop(queue);
+        let is_same_queue = self.tracks.len() == new_tracks.len()
+            && self
+                .tracks
+                .iter()
+                .zip(new_tracks.iter())
+                .all(|(x, y)| x.base.id == y.id);
+
+        if force || !is_same_queue {
+            let artist_by_track = build_artist_map(&services.library, &new_tracks);
+            let mut art_cache = services.cover_art_cache.borrow_mut();
+
+            self.tracks = new_tracks
+                .iter()
+                .map(|x| {
+                    Track::from_library_track(
+                        x,
+                        &artist_by_track,
+                        &mut art_cache,
+                        &services.library,
+                    )
+                })
+                .collect();
+        };
+        self.current_index = new_index;
+        cx.notify();
+    }
+
+    fn virtual_list_item_sizes(&mut self, item_height: f32) -> Rc<Vec<Size<Pixels>>> {
+        if self.tracks.len() == self.item_sizes.len()
+            && self
+                .item_sizes
+                .first()
+                .unwrap_or(&Size::new(px(0.), px(0.)))
+                .height
+                == px(item_height)
+        {
+            self.item_sizes.clone()
+        } else {
+            self.item_sizes = Rc::new(vec![Size::new(px(0.), px(item_height)); self.tracks.len()]);
+            self.item_sizes.clone()
+        }
+    }
+}
+
+impl Render for QueueView {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let header = queue_header(cx, !self.tracks.is_empty());
+
+        if self.tracks.is_empty() {
+            return queue_empty_state(cx, header);
+        }
+
+        let params = QueueRowParams::from_cx(cx);
+
+        v_flex().size_full().child(header).child(
+            v_flex()
+                .relative()
+                .flex_1()
+                .child(
+                    v_virtual_list(
+                        cx.entity().clone(),
+                        "queue_list",
+                        self.virtual_list_item_sizes(params.item_height),
+                        move |view, visible_range, _window, cx| {
+                            visible_range
+                                .map(|track_ix| {
+                                    queue_visible_range_row(cx, view, &params, track_ix)
+                                        .into_any_element()
+                                })
+                                .collect::<Vec<_>>()
+                        },
+                    )
+                    .track_scroll(&self.scroll_handle)
+                    .flex_1(),
+                )
+                .scrollbar(&self.scroll_handle, ScrollbarAxis::Vertical),
+        )
+    }
+}
+
+fn queue_visible_range_row(
+    cx: &mut Context<QueueView>,
+    view: &mut QueueView,
+    params: &QueueRowParams,
+    track_ix: usize,
+) -> gpui::Stateful<Div> {
+    let track = &view.tracks[track_ix];
+    let track_id = track.base.id;
+    let is_current = Some(track_ix) == view.current_index;
+
+    h_flex()
+        .id(ElementId::Integer(track_ix as u64))
+        .group(ROW_HOVER_GROUP)
+        .w_full()
+        .h(px(params.item_height))
+        .pl_4()
+        .pr_2()
+        .gap_1()
+        .items_center()
+        .border_b(px(1.))
+        .border_color(params.border)
+        .when(is_current, |s| crate::track_list::current_row(s, cx))
+        .hover(|s| s.bg(params.list_hover))
+        .child(album_cover_cell(params, track.cover.clone()))
+        .when_else(
+            params.show_queue_artist,
+            |row| {
+                row.child(
+                    v_flex()
+                        .ml_2()
+                        .flex_1()
+                        .min_w(px(0.))
+                        .justify_center()
+                        .child(
+                            div()
+                                .w_full()
+                                .overflow_hidden()
+                                .text_ellipsis()
+                                .text_sm()
+                                .when(is_current, |d| d.font_weight(FontWeight::SEMIBOLD))
+                                .child(track.base.title.clone()),
+                        )
+                        .child(
+                            div()
+                                .w_full()
+                                .overflow_hidden()
+                                .text_ellipsis()
+                                .text_xs()
+                                .text_color(params.muted_fg)
+                                .child(track.artist.clone()),
+                        ),
+                )
+            },
+            |row| {
+                row.child(
+                    div()
+                        .ml_2()
+                        .flex_1()
+                        .min_w(px(0.))
+                        .overflow_hidden()
+                        .text_ellipsis()
+                        .text_sm()
+                        .when(is_current, |d| d.font_weight(FontWeight::SEMIBOLD))
+                        .child(track.base.title.clone()),
+                )
+            },
+        )
+        .when(
+            params.show_queue_actions && params.playlists_enabled,
+            |row| {
+                row.child(
+                    div()
+                        .flex_shrink_0()
+                        .id(ElementId::NamedInteger(
+                            "queue-playlist".into(),
+                            track_ix as u64,
+                        ))
+                        .child(add_to_playlist_button(track_id, &params.buttons)),
+                )
+            },
+        )
+        .when(params.show_track_duration, |row| {
+            row.child(track_duration(cx, track.base.duration.clone()))
+        })
+        .child(
+            div()
+                .id(ElementId::NamedInteger(
+                    "remove-from-queue".into(),
+                    track_ix as u64,
+                ))
+                .flex_shrink_0()
+                .size(rems(26. / 16.))
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded_full()
+                .cursor(gpui::CursorStyle::PointingHand)
+                .opacity(0.)
+                .group_hover(ROW_HOVER_GROUP, |s| s.opacity(1.))
+                .hover(|s| s.bg(params.accent))
+                .tooltip(|window, cx| {
+                    gpui_component::tooltip::Tooltip::new(tr().remove_from_queue.clone())
+                        .build(window, cx)
+                })
+                .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    cx.stop_propagation();
+                    let services = cx.global::<Services>();
+                    let outcome = services
+                        .playback_queue
+                        .borrow_mut()
+                        .remove_track_at(track_ix);
+                    match outcome {
+                        RemoveOutcome::PlayNext(next) => {
+                            if this.is_playing {
+                                services.play_track(&next);
+                            } else {
+                                services.load_track(&next);
+                            }
+                        }
+                        RemoveOutcome::Stopped => {
+                            services
+                                .current_position_ms
+                                .store(0, std::sync::atomic::Ordering::Relaxed);
+                            services.stop_playback();
+                        }
+                        RemoveOutcome::Unaffected => {}
+                    }
+                    this.refresh_tracks(cx);
+                    crate::services::queue_mutated(cx);
+                }))
+                .child(
+                    gpui::svg()
+                        .path("icons/s1-x.svg")
+                        .size(rems(14. / 16.))
+                        .text_color(params.muted_fg),
+                ),
+        )
+        .on_click(cx.listener(move |_this, _, _, cx| {
+            let services = cx.global::<Services>();
+            let mut queue = services.playback_queue.borrow_mut();
+            let track = queue.play_track_at(track_ix).cloned();
+            drop(queue);
+            if let Some(track) = track {
+                services.play_track(&track);
+                crate::services::save_playback(cx);
+            }
+        }))
+        .on_drag(
+            DraggedQueueTrack {
+                from_ix: track_ix,
+                title: track.base.title.clone(),
+            },
+            |drag, _, _, cx| {
+                cx.stop_propagation();
+                cx.new(|_| drag.clone())
+            },
+        )
+        .drag_over::<DraggedQueueTrack>(move |style, drag, _, cx| {
+            // The dragged item lands below the target when moving
+            // down (the target shifts up after removal) and above
+            // it when moving up; match the indicator to that gap.
+            // When indicating the top gap, drop the row's own bottom
+            // divider so only the single indicator line shows.
+            let style = if drag.from_ix < track_ix {
+                style.border_b_2()
+            } else {
+                style.border_t_2().border_b(px(0.))
+            };
+            style.border_color(Colors::drag_border(cx))
+        })
+        .on_drop(cx.listener(move |this, drag: &DraggedQueueTrack, _, cx| {
+            if drag.from_ix == track_ix {
+                return;
+            }
+            let services = cx.global::<Services>();
+            services
+                .playback_queue
+                .borrow_mut()
+                .move_track(drag.from_ix, track_ix);
+            this.refresh_tracks(cx);
+            crate::services::queue_mutated(cx);
+        }))
+}
+
+fn queue_empty_state(cx: &Context<QueueView>, header: Div) -> Div {
+    v_flex().size_full().child(header).child(
+        div()
+            .px_4()
+            .pt_2()
+            .text_sm()
+            .text_color(Colors::muted_foreground(cx))
+            .child(tr().queue_is_empty.clone()),
+    )
+}
+
+fn queue_header(cx: &mut Context<QueueView>, has_tracks: bool) -> Div {
+    let playlists_enabled = cx.global::<SettingsStore>().playlists_enabled();
+    let actions = panel_header_actions()
+        .when(has_tracks && playlists_enabled, |d| {
+            d.child(
+                panel_header_button(
+                    "save-queue-to-playlist",
+                    "icons/s1-queue-save.svg",
+                    tr().save_queue_to_playlist.clone(),
+                    cx,
+                )
+                .on_click(cx.listener(|_, event: &ClickEvent, _, cx| {
+                    let track_ids: Vec<i64> = {
+                        let queue = cx.global::<Services>().playback_queue.borrow();
+                        queue
+                            .original_order_vec()
+                            .unwrap_or_else(|| queue.tracks_vec())
+                            .iter()
+                            .map(|t| t.id)
+                            .collect()
+                    };
+                    let click_pos = event.position();
+                    let anchor = point(click_pos.x - px(260.), click_pos.y + px(8.));
+                    let bus = cx.global::<Services>().playlist_popup_bus.clone();
+                    bus.update(cx, |_, cx| {
+                        cx.emit(OpenAddToPlaylist { track_ids, anchor });
+                    });
+                })),
+            )
+        })
+        .when(has_tracks, |d| {
+            d.child(
+                panel_header_button(
+                    "clear-queue",
+                    "icons/s1-trash.svg",
+                    tr().clear_queue.clone(),
+                    cx,
+                )
+                .on_click(cx.listener(|this, _, _, cx| {
+                    let services = cx.global::<Services>();
+                    services.playback_queue.borrow_mut().clear();
+                    services
+                        .current_position_ms
+                        .store(0, std::sync::atomic::Ordering::Relaxed);
+                    services.stop_playback();
+                    this.refresh_tracks(cx);
+                    crate::services::queue_mutated(cx);
+                })),
+            )
+        });
+    panel_header(tr().queue.clone(), actions, cx)
+}
+
+fn album_cover_cell(params: &QueueRowParams, cover_img: Option<Arc<Image>>) -> AnyElement {
+    let cover_size = params.cover_size;
+
+    if let Some(cover_img) = cover_img {
+        img(cover_img)
+            .flex_shrink_0()
+            .w(px(cover_size))
+            .h(px(cover_size))
+            .rounded(px(3.))
+            .object_fit(ObjectFit::Cover)
+            .with_fallback({
+                let bg = params.muted;
+                let fg = params.muted_fg;
+                move || cover_placeholder(cover_size, 3., bg, fg).into_any_element()
+            })
+            .into_any_element()
+    } else {
+        cover_placeholder(cover_size, 3., params.muted, params.muted_fg).into_any_element()
+    }
+}

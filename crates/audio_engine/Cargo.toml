@@ -1,0 +1,25 @@
+[package]
+name = "audio_engine"
+version.workspace = true
+edition.workspace = true
+publish = false
+
+[dependencies]
+audio_common = { path = "../audio_common" }
+audio_decoder = { path = "../audio_decoder" }
+audio_output = { path = "../audio_output" }
+gpui.workspace = true
+log = { workspace = true }
+anyhow = { workspace = true }
+flume = "0.12.0"
+parking_lot = "0.12.5"
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "audio_engine_test"
+path = "src/test/main.rs"
+
+[lints]
+workspace = true

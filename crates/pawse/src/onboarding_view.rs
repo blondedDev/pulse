@@ -1,0 +1,182 @@
+use gpui::{
+    App, Context, FocusHandle, FontWeight, InteractiveElement, IntoElement, ParentElement,
+    Render, SharedString, Styled, Subscription, Window, div, px,
+};
+use gpui_component::{
+    Icon, IconName, Sizable,
+    button::{Button, ButtonVariants},
+    h_flex,
+    theme::ThemeRegistry,
+    v_flex,
+};
+
+use crate::localization::tr;
+use crate::settings_store::{SettingsStore, notify_save_error};
+use crate::settings_view::{pick_and_add_folder, remove_folder_and_rescan};
+use crate::theme_colors::Colors;
+
+/// Size of the small status icons in the folder list.
+const ICON_SIZE: f32 = 14.;
+
+pub struct OnboardingView {
+    focus_handle: FocusHandle,
+    _theme_registry_subscription: Subscription,
+    _settings_observer: Subscription,
+}
+
+impl OnboardingView {
+    pub fn new(_window: &mut Window, cx: &mut Context<Self>) -> Self {
+        Self {
+            focus_handle: cx.focus_handle(),
+            _theme_registry_subscription: cx.observe_global::<ThemeRegistry>(|_, cx| cx.notify()),
+            _settings_observer: cx.observe_global::<SettingsStore>(|_, cx| cx.notify()),
+        }
+    }
+}
+
+fn finish_onboarding(window: &mut Window, cx: &mut App) {
+    if let Err(e) = cx
+        .global_mut::<SettingsStore>()
+        .set_onboarding_complete(true)
+    {
+        notify_save_error(cx, e);
+        return;
+    }
+    crate::open_main_window(cx, false);
+    window.remove_window();
+}
+
+fn section(label: SharedString, field: impl IntoElement, cx: &App) -> impl IntoElement {
+    v_flex()
+        .gap_2()
+        .w_full()
+        .items_start()
+        .child(
+            div()
+                .text_sm()
+                .font_weight(FontWeight::SEMIBOLD)
+                .text_color(Colors::foreground(cx))
+                .child(label),
+        )
+        .child(field)
+}
+
+impl Render for OnboardingView {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let s = tr();
+        let folders = cx.global::<SettingsStore>().music_folders().to_vec();
+
+        let mut folder_list = v_flex().gap_2().w_full();
+        if folders.is_empty() {
+            folder_list = folder_list.child(
+                div()
+                    .px_3()
+                    .py_2()
+                    .text_sm()
+                    .text_color(Colors::muted_foreground(cx))
+                    .child(s.no_folders_added.clone()),
+            );
+        } else {
+            for path in &folders {
+                let path_text: SharedString = path.to_string_lossy().into_owned().into();
+                let path_for_remove = path.clone();
+                let remove_id = format!("ob-remove-{}", path.display());
+                folder_list = folder_list.child(
+                    h_flex()
+                        .gap_2()
+                        .items_center()
+                        .px_3()
+                        .py_2()
+                        .rounded(px(6.))
+                        .bg(Colors::muted(cx))
+                        .child(
+                            Icon::new(IconName::Folder)
+                                .with_size(px(ICON_SIZE))
+                                .flex_shrink_0()
+                                .text_color(Colors::muted_foreground(cx)),
+                        )
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w(px(0.))
+                                .text_sm()
+                                .text_color(Colors::foreground(cx))
+                                .child(path_text),
+                        )
+                        .child(
+                            Button::new(SharedString::from(remove_id))
+                                .small()
+                                .label(s.remove.clone())
+                                .on_click(move |_, _, cx| {
+                                    remove_folder_and_rescan(path_for_remove.clone(), cx)
+                                }),
+                        ),
+                );
+            }
+        }
+
+        let folder_field = v_flex()
+            .gap_3()
+            .w_full()
+            .child(folder_list)
+            .child(
+                h_flex().child(
+                    Button::new("ob-add-folder")
+                        .small()
+                        .label(s.add_folder.clone())
+                        .on_click(|_, _, cx| pick_and_add_folder(cx)),
+                ),
+            );
+
+        div()
+            .id("onboarding")
+            .size_full()
+            .overflow_hidden()
+            .bg(Colors::title_bar(cx))
+            .flex()
+            .items_center()
+            .justify_center()
+            .track_focus(&self.focus_handle)
+            .child(
+                v_flex()
+                    .w(px(460.))
+                    .gap_5()
+                    .p_8()
+                    .rounded(px(12.))
+                    .bg(Colors::background(cx))
+                    .border_1()
+                    .border_color(Colors::border(cx))
+                    .child(
+                        v_flex()
+                            .gap_1()
+                            .child(
+                                div()
+                                    .text_xl()
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .text_color(Colors::foreground(cx))
+                                    .child(s.onboarding_title.clone()),
+                            )
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .text_color(Colors::muted_foreground(cx))
+                                    .child(s.onboarding_subtitle.clone()),
+                            ),
+                    )
+                    .child(section(
+                        s.onboarding_folder_prompt.clone(),
+                        folder_field,
+                        cx,
+                    ))
+                    .child(
+                        h_flex().justify_end().child(
+                            Button::new("ob-finish")
+                                .primary()
+                                .small()
+                                .label(s.onboarding_finish.clone())
+                                .on_click(|_, window, cx| finish_onboarding(window, cx)),
+                        ),
+                    ),
+            )
+    }
+}

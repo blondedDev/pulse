@@ -1,0 +1,11 @@
+[package]
+name = "audio_common"
+version.workspace = true
+edition.workspace = true
+publish = false
+
+[dependencies]
+anyhow = { workspace = true }
+thiserror = "2.0"
+[lints]
+workspace = true

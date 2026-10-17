@@ -1,0 +1,936 @@
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+    thread,
+    time::{Duration, Instant},
+};
+
+use crate::stream::{Poll, Source};
+use crate::{Command, EngineEvent, StreamTrack};
+use audio_common::AudioBatch;
+use audio_decoder::Decoder;
+use audio_output::{AudioOutput, FadeEvent, Output};
+use flume::TryRecvError;
+
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+enum AudioEngineState {
+    TrackNotSet,
+    Paused,
+    Playing,
+}
+
+/// What the engine should do once the active fade ramp completes.
+#[derive(Debug, Clone, Copy)]
+enum FadeIntent {
+    None,
+    /// Fade-out running; pause the output when it lands at zero.
+    PauseOut,
+    /// Fade-out running; perform this seek when it lands at zero.
+    SeekOut(f32),
+    /// Fade-in running on resume; emit `Playing` when it lands at unity.
+    PlayIn,
+    /// Fade-in running after a seek; nothing to emit on completion.
+    SeekIn,
+}
+
+const POSITION_UPDATE_INTERVAL_MS: u64 = 200;
+const FADE_PAUSE_MS: u32 = 300;
+
+const RELEASE_AFTER_PAUSE: Duration = Duration::from_secs(1);
+const FADE_SEEK_MS: u32 = 160;
+const STARVED_WAIT: Duration = Duration::from_millis(10);
+const BUFFERING_AFTER: Duration = Duration::from_millis(250);
+const SETTLE_FADE_AFTER: Duration = Duration::from_millis(400);
+
+pub type TrackResolver = Arc<dyn Fn(&Path) -> Result<PathBuf, String> + Send + Sync>;
+
+#[derive(Clone)]
+pub struct EngineCommander(flume::Sender<Command>);
+
+impl EngineCommander {
+    pub fn send(&self, command: Command) {
+        if self.0.send(command).is_err() {
+            log::error!("audio engine: command channel closed; dropping command");
+        }
+    }
+}
+
+pub struct AudioEngine {
+    command_sender: flume::Sender<Command>,
+    event_receiver: flume::Receiver<EngineEvent>,
+}
+
+impl AudioEngine {
+    pub fn new(out: Arc<Output>) -> Self {
+        Self::with_resolver(out, Arc::new(|path| Ok(path.to_path_buf())))
+    }
+
+    pub fn with_resolver(out: Arc<Output>, resolver: TrackResolver) -> Self {
+        let (event_sender, event_receiver) = flume::bounded(64);
+        let (command_sender, command_receiver) = flume::bounded(64);
+
+        AudioEngineLoop {
+            output: out,
+            source: None,
+            state: AudioEngineState::TrackNotSet,
+            command_receiver,
+            event_sender,
+            last_position_update: Duration::ZERO,
+            current_position: Duration::ZERO,
+            track_start: Duration::ZERO,
+            track_end: None,
+            needs_flush: false,
+            fade_intent: FadeIntent::None,
+            resolver,
+            buffering: false,
+            preparing: false,
+            pending_play: None,
+            starved_since: None,
+            prepare_started: None,
+            release_at: Some(Instant::now() + RELEASE_AFTER_PAUSE),
+            ended_naturally: false,
+        }
+        .run();
+
+        Self {
+            command_sender,
+            event_receiver,
+        }
+    }
+
+    pub fn events(&self) -> flume::Receiver<EngineEvent> {
+        self.event_receiver.clone()
+    }
+
+    pub fn commander(&self) -> EngineCommander {
+        EngineCommander(self.command_sender.clone())
+    }
+
+    pub fn pause(&self) {
+        self.send_command(Command::Pause)
+    }
+
+    pub fn play(&self) {
+        self.send_command(Command::Play { fade_in: true })
+    }
+
+    pub fn play_gapless(&self) {
+        self.send_command(Command::Play { fade_in: false })
+    }
+
+    pub fn seek(&self, point: f32) {
+        self.send_command(Command::Seek(point))
+    }
+
+    pub fn stop(&self) {
+        self.send_command(Command::Stop)
+    }
+
+    pub fn set_track(&self, path: PathBuf) {
+        self.send_command(Command::SetLocalTrack {
+            path,
+            start_offset: None,
+            track_duration: None,
+            prepared: false,
+        })
+    }
+
+    pub fn set_track_with_offset(
+        &self,
+        path: PathBuf,
+        start_offset: Option<Duration>,
+        track_duration: Option<Duration>,
+    ) {
+        self.send_command(Command::SetLocalTrack {
+            path,
+            start_offset,
+            track_duration,
+            prepared: false,
+        })
+    }
+
+    pub fn send_command(&self, command: Command) {
+        if self.command_sender.send(command).is_err() {
+            log::error!("audio engine: command channel closed; dropping command");
+        }
+    }
+
+    pub fn shutdown(&self) {
+        self.send_command(Command::Shutdown)
+    }
+}
+
+struct AudioEngineLoop {
+    output: Arc<Output>,
+    source: Option<Source>,
+    state: AudioEngineState,
+    command_receiver: flume::Receiver<Command>,
+    event_sender: flume::Sender<EngineEvent>,
+    last_position_update: Duration,
+    current_position: Duration,
+    track_start: Duration,
+    track_end: Option<Duration>,
+    needs_flush: bool,
+    fade_intent: FadeIntent,
+    resolver: TrackResolver,
+    buffering: bool,
+    preparing: bool,
+    pending_play: Option<bool>,
+    starved_since: Option<Instant>,
+    prepare_started: Option<Instant>,
+    release_at: Option<Instant>,
+    ended_naturally: bool,
+}
+
+impl AudioEngineLoop {
+    pub fn run(self) {
+        thread::Builder::new()
+            .name("audio-engine".into())
+            .spawn(move || {
+                audio_output::thread_priority::boost_decoder_thread();
+                self.run_loop();
+            })
+            .expect("failed to spawn audio engine thread");
+    }
+
+    fn run_loop(mut self) {
+        let mut current_audio_batch: Option<AudioBatch> = None;
+        let mut should_shutdown = false;
+
+        loop {
+            if should_shutdown {
+                return;
+            }
+            let command = {
+                if self.state == AudioEngineState::Playing && self.starved_since.is_some() {
+                    match self.command_receiver.recv_timeout(STARVED_WAIT) {
+                        Ok(c) => Some(c),
+                        Err(flume::RecvTimeoutError::Timeout) => None,
+                        Err(flume::RecvTimeoutError::Disconnected) => return,
+                    }
+                } else if self.state == AudioEngineState::Playing {
+                    let command = self.command_receiver.try_recv();
+                    match command {
+                        Ok(c) => Some(c),
+                        Err(err) => match err {
+                            TryRecvError::Disconnected => {
+                                return;
+                            }
+                            TryRecvError::Empty => None,
+                        },
+                    }
+                } else if let Some(wait) = self.prepare_buffering_wait() {
+                    match self.command_receiver.recv_timeout(wait) {
+                        Ok(c) => Some(c),
+                        Err(flume::RecvTimeoutError::Timeout) => {
+                            self.set_buffering(true);
+                            continue;
+                        }
+                        Err(flume::RecvTimeoutError::Disconnected) => return,
+                    }
+                } else if let Some(release_at) = self.release_at {
+                    match self.command_receiver.recv_deadline(release_at) {
+                        Ok(c) => Some(c),
+                        Err(flume::RecvTimeoutError::Timeout) => {
+                            self.release_at = None;
+                            self.ended_naturally = false;
+                            self.output.pause();
+                            self.output.release_paused();
+                            continue;
+                        }
+                        Err(flume::RecvTimeoutError::Disconnected) => return,
+                    }
+                } else {
+                    let command = self.command_receiver.recv();
+                    match command {
+                        Ok(c) => Some(c),
+                        Err(_) => return,
+                    }
+                }
+            };
+
+            if let Some(command) = command {
+                if matches!(command, Command::Shutdown) {
+                    self.handle_command(command);
+                    should_shutdown = true;
+                    continue;
+                }
+                self.handle_command(command);
+                continue;
+            }
+
+            // A fade ramp may have just completed in the audio callback. When it
+            // resolves into a pause we restart the loop so the top blocks on
+            // `recv` instead of decoding ahead while parked. We deliberately keep
+            // `current_audio_batch`: it is the already-decoded remainder that
+            // didn't fit the ring buffer, and writing it first on resume is what
+            // makes playback continue from the exact same sample (no skip).
+            if self.handle_fade_event() {
+                continue;
+            }
+
+            if self.needs_flush {
+                self.output.clear();
+                current_audio_batch = None;
+                self.needs_flush = false;
+            }
+
+            if let Some(track_end) = self.track_end
+                && self.current_position >= track_end
+            {
+                self.end_track();
+                continue;
+            }
+
+            let batch_to_write = match current_audio_batch {
+                Some(batch) => batch,
+                None => match self.decode_next_batch() {
+                    Some(mut batch) => {
+                        if self.trim_to_track_end(&mut batch) {
+                            self.end_track();
+                            continue;
+                        }
+                        batch
+                    }
+                    None => continue,
+                },
+            };
+
+            let written = self.output.write(&batch_to_write);
+            if written == batch_to_write.data.len() {
+                current_audio_batch = None;
+            } else {
+                current_audio_batch = Some(AudioBatch {
+                    data: batch_to_write.data.copy_from_offset(written),
+                    metadata: batch_to_write.metadata.clone(),
+                });
+            }
+
+            self.update_current_position(written, &batch_to_write);
+        }
+    }
+
+    fn end_track(&mut self) {
+        self.ended_naturally = matches!(self.fade_intent, FadeIntent::None);
+        self.set_state(AudioEngineState::TrackNotSet);
+        self.source = None;
+        self.fade_intent = FadeIntent::None;
+        self.arm_release();
+        _ = self.event_sender.send(EngineEvent::TrackEnded);
+    }
+
+    fn trim_to_track_end(&self, batch: &mut AudioBatch) -> bool {
+        let Some(track_end) = self.track_end else {
+            return false;
+        };
+        let frames = frames_until(track_end, self.current_position, batch.metadata.sample_rate);
+        if frames == 0 {
+            return true;
+        }
+        let channels = batch.metadata.channels.to_u8() as usize;
+        batch.data.truncate(frames * channels);
+        false
+    }
+
+    fn update_current_position(&mut self, written: usize, b: &AudioBatch) {
+        let params = &b.metadata;
+        let channels = params.channels.to_u8() as f32;
+        let written_secs = written as f32 / (params.sample_rate as f32 * channels);
+        self.current_position += Duration::from_secs_f32(written_secs);
+
+        if let Some(track_end) = self.track_end
+            && self.current_position >= track_end
+        {
+            return;
+        }
+
+        // While a seek fade is running we keep playing the OLD position to ramp
+        // it down, but the UI has already moved to the target. Stay quiet until
+        // `do_seek` emits the authoritative new position, or the slider snaps
+        // back for a moment.
+        if self.state == AudioEngineState::Playing && !self.is_seeking() {
+            let relative = self.current_position.saturating_sub(self.track_start);
+            if relative.saturating_sub(self.last_position_update)
+                >= Duration::from_millis(POSITION_UPDATE_INTERVAL_MS)
+            {
+                self.last_position_update = relative;
+                _ = self
+                    .event_sender
+                    .send(EngineEvent::PositionChanged(relative));
+            }
+        }
+    }
+
+    fn is_seeking(&self) -> bool {
+        matches!(
+            self.fade_intent,
+            FadeIntent::SeekOut(_) | FadeIntent::SeekIn
+        )
+    }
+
+    fn decode_next_batch(&mut self) -> Option<AudioBatch> {
+        let source = self.source.as_mut()?;
+
+        match source.poll() {
+            Poll::Ready(batch) => {
+                self.starved_since = None;
+                self.prepare_started = None;
+                self.set_buffering(false);
+                Some(batch)
+            }
+            Poll::Pending => {
+                self.on_starved();
+                None
+            }
+            Poll::Ended => {
+                self.end_track();
+                None
+            }
+            Poll::Failed(err) => {
+                self.set_state(AudioEngineState::TrackNotSet);
+                self.source = None;
+                self.fade_intent = FadeIntent::None;
+                self.arm_release();
+                _ = self.event_sender.send(EngineEvent::Error(err));
+                None
+            }
+        }
+    }
+
+    fn on_starved(&mut self) {
+        let since = *self
+            .starved_since
+            .get_or_insert_with(|| self.prepare_started.take().unwrap_or_else(Instant::now));
+        let starved_for = since.elapsed();
+        if starved_for >= BUFFERING_AFTER {
+            self.set_buffering(true);
+        }
+        if starved_for < SETTLE_FADE_AFTER {
+            return;
+        }
+        match self.fade_intent {
+            FadeIntent::PauseOut => self.pause_now(),
+            FadeIntent::SeekOut(position) => {
+                self.do_seek(position);
+                self.output.begin_fade(Some(0.0), 1.0, FADE_SEEK_MS);
+                self.fade_intent = FadeIntent::SeekIn;
+            }
+            _ => {}
+        }
+    }
+
+    fn pause_output(&mut self) {
+        self.output.pause();
+        self.arm_release();
+    }
+
+    fn arm_release(&mut self) {
+        self.release_at = Some(Instant::now() + RELEASE_AFTER_PAUSE);
+    }
+
+    fn pause_now(&mut self) {
+        self.fade_intent = FadeIntent::None;
+        self.pause_output();
+        self.set_state(AudioEngineState::Paused);
+        _ = self.event_sender.send(EngineEvent::Paused);
+    }
+
+    fn set_buffering(&mut self, buffering: bool) {
+        if self.buffering != buffering {
+            self.buffering = buffering;
+            _ = self.event_sender.send(EngineEvent::Buffering(buffering));
+        }
+    }
+
+    fn clear_preparation(&mut self) {
+        self.preparing = false;
+        self.pending_play = None;
+        self.prepare_started = None;
+        self.set_buffering(false);
+    }
+
+    fn prepare_buffering_wait(&self) -> Option<Duration> {
+        if self.buffering {
+            return None;
+        }
+        let started = self.prepare_started?;
+        Some(BUFFERING_AFTER.saturating_sub(started.elapsed()))
+    }
+
+    fn handle_command(&mut self, command: Command) {
+        let after_natural_end = std::mem::take(&mut self.ended_naturally);
+        match command {
+            Command::Play { fade_in } => self.handle_play(fade_in),
+            Command::Pause => self.handle_pause(),
+            Command::Seek(position) => self.handle_seek(position),
+            Command::SetLocalTrack {
+                path,
+                start_offset,
+                track_duration,
+                prepared,
+            } => self.handle_set_local_track(
+                path,
+                start_offset,
+                track_duration,
+                prepared,
+                after_natural_end,
+            ),
+            Command::Prepare {
+                play,
+                track_duration,
+            } => self.handle_prepare(play, track_duration),
+            Command::SetStreamTrack(track) => self.handle_set_stream_track(*track),
+            Command::Stop => self.handle_stop(),
+            Command::Fail(message) => {
+                self.pause_output();
+                self.source = None;
+                self.clear_preparation();
+                self.set_state(AudioEngineState::TrackNotSet);
+                _ = self.event_sender.send(EngineEvent::Error(message));
+            }
+            Command::Shutdown => self.handle_shutdown(),
+        }
+    }
+
+    fn handle_shutdown(&mut self) {
+        self.pause_output();
+        self.set_state(AudioEngineState::TrackNotSet);
+    }
+
+    fn handle_stop(&mut self) {
+        self.pause_output();
+        self.output.clear();
+        self.output.reset_fade();
+        self.fade_intent = FadeIntent::None;
+        self.needs_flush = true;
+        self.source = None;
+        self.clear_preparation();
+        self.last_position_update = Duration::ZERO;
+        self.current_position = Duration::ZERO;
+        self.track_start = Duration::ZERO;
+        self.track_end = None;
+        self.set_state(AudioEngineState::TrackNotSet);
+        _ = self.event_sender.send(EngineEvent::Stopped);
+        _ = self
+            .event_sender
+            .send(EngineEvent::PositionChanged(Duration::ZERO));
+    }
+
+    fn reset_track(&mut self) {
+        self.output.clear();
+        self.output.reset_fade();
+        self.needs_flush = true;
+        self.reset_track_state();
+    }
+
+    fn reset_track_state(&mut self) {
+        self.fade_intent = FadeIntent::None;
+        self.source = None;
+        self.starved_since = None;
+        self.last_position_update = Duration::ZERO;
+        self.current_position = Duration::ZERO;
+        self.track_start = Duration::ZERO;
+        self.track_end = None;
+    }
+
+    fn handle_prepare(&mut self, play: Option<bool>, track_duration: Option<Duration>) {
+        self.reset_track();
+        _ = self.event_sender.send(EngineEvent::Preparing {
+            duration: track_duration,
+        });
+        self.pause_output();
+        self.preparing = true;
+        self.pending_play = play;
+        self.prepare_started = play.map(|_| Instant::now());
+        self.set_state(AudioEngineState::TrackNotSet);
+        if play.is_none() {
+            self.set_buffering(false);
+        }
+    }
+
+    fn handle_set_stream_track(&mut self, track: StreamTrack) {
+        let StreamTrack {
+            source,
+            start_offset,
+            track_duration,
+        } = track;
+        let pending_play = self.pending_play.take();
+        if pending_play.is_none() {
+            self.prepare_started = None;
+        }
+        self.reset_track();
+        self.install(Source::Stream(source), start_offset, track_duration);
+        self.preparing = false;
+        match pending_play {
+            Some(fade_in) => self.handle_play(fade_in),
+            None => self.set_buffering(false),
+        }
+    }
+
+    fn handle_set_local_track(
+        &mut self,
+        path: PathBuf,
+        start_offset: Option<Duration>,
+        track_duration: Option<Duration>,
+        prepared: bool,
+        after_natural_end: bool,
+    ) {
+        let pending_play = self.pending_play.take().filter(|_| prepared);
+        self.prepare_started = None;
+        if after_natural_end {
+            self.reset_track_state();
+        } else {
+            self.reset_track();
+        }
+
+        let decoder = match (self.resolver)(&path)
+            .and_then(|resolved| Decoder::open(resolved.as_path()).map_err(|e| e.to_string()))
+        {
+            Ok(decoder) => decoder,
+            Err(err) => {
+                self.pause_output();
+                self.clear_preparation();
+                self.set_state(AudioEngineState::TrackNotSet);
+                self.source = None;
+                _ = self
+                    .event_sender
+                    .send(EngineEvent::Error(format!("{}: {err}", path.display())));
+                return;
+            }
+        };
+
+        self.install(Source::File(decoder), start_offset, track_duration);
+        self.preparing = false;
+        match pending_play {
+            Some(fade_in) => self.handle_play(fade_in),
+            None => self.set_buffering(false),
+        }
+    }
+
+    fn install(
+        &mut self,
+        source: Source,
+        start_offset: Option<Duration>,
+        track_duration: Option<Duration>,
+    ) {
+        let file_duration = source.duration().unwrap_or_default();
+        let duration_for_ui = track_duration.unwrap_or(file_duration);
+
+        let track_start = start_offset.unwrap_or(Duration::ZERO);
+        let track_end = track_duration
+            .map(|d| track_start + d)
+            .unwrap_or(file_duration);
+
+        self.source = Some(source);
+        self.track_start = track_start;
+        self.track_end = bounded_track_end(track_end, file_duration);
+
+        if track_start > Duration::ZERO {
+            let file_dur = file_duration;
+            let seek_point = if file_dur > Duration::ZERO {
+                (track_start.as_secs_f64() / file_dur.as_secs_f64()) as f32
+            } else {
+                0.0
+            };
+            if let Some(source) = self.source.as_mut()
+                && let Err(e) = source.seek(seek_point.clamp(0.0, 1.0))
+            {
+                log::error!("Seek to offset error: {}", e);
+            }
+            self.current_position = track_start;
+        }
+
+        if self
+            .event_sender
+            .send(EngineEvent::Loaded {
+                params: self.source.as_ref().unwrap().params(),
+                duration: duration_for_ui,
+            })
+            .is_err()
+        {
+            log::error!("audio engine: failed to emit Loaded event");
+        }
+
+        match self.state {
+            AudioEngineState::TrackNotSet => self.set_state(AudioEngineState::Paused),
+            AudioEngineState::Paused => {}
+            AudioEngineState::Playing => {}
+        }
+
+        _ = self
+            .event_sender
+            .send(EngineEvent::PositionChanged(Duration::ZERO));
+    }
+
+    fn handle_seek(&mut self, position: f32) {
+        match self.state {
+            AudioEngineState::Playing if self.buffering => {
+                self.fade_intent = FadeIntent::None;
+                self.output.reset_fade();
+                self.do_seek(position);
+            }
+            AudioEngineState::Playing => {
+                // Duck out first; the actual seek + fade-in happens once the
+                // ramp reaches zero (handled in handle_fade_event).
+                self.output.begin_fade(None, 0.0, FADE_SEEK_MS);
+                self.fade_intent = FadeIntent::SeekOut(position);
+                // Pin the UI to the target right away. The real seek is deferred
+                // ~160ms for the fade, so without this a PositionChanged that was
+                // already in flight (old position) would land after the slider
+                // moved and blink it back.
+                if let Some(target) = self.seek_target(position) {
+                    let relative = target.saturating_sub(self.track_start);
+                    self.last_position_update = relative;
+                    _ = self
+                        .event_sender
+                        .send(EngineEvent::PositionChanged(relative));
+                }
+            }
+            AudioEngineState::Paused => {
+                // Nothing is audible; seek straight away with no fade.
+                self.do_seek(position);
+            }
+            AudioEngineState::TrackNotSet => {}
+        }
+    }
+
+    /// Absolute decoder position for a seek `position` (a fraction of the
+    /// effective track range). `None` if there is no decoder or its duration
+    /// is unknown.
+    fn seek_target(&self, position: f32) -> Option<Duration> {
+        let file_duration = self.source.as_ref()?.duration().unwrap_or_default();
+        if file_duration == Duration::ZERO {
+            return None;
+        }
+        let effective_duration = self
+            .track_end
+            .unwrap_or(file_duration)
+            .saturating_sub(self.track_start);
+        Some(self.track_start + effective_duration.mul_f32(position))
+    }
+
+    /// Clears the output, seeks the decoder to `position` (a fraction of the
+    /// effective track range), and emits the new position.
+    fn do_seek(&mut self, position: f32) {
+        self.output.clear();
+        self.needs_flush = true;
+
+        let Some(new_position) = self.seek_target(position) else {
+            return;
+        };
+        let source = self.source.as_mut().unwrap();
+        let file_duration = source.duration().unwrap_or_default();
+
+        let seek_point = new_position.as_secs_f64() / file_duration.as_secs_f64();
+        if let Err(e) = source.seek(seek_point as f32) {
+            log::error!("Seek error: {}", e);
+            return;
+        }
+        self.current_position = new_position;
+        let relative = new_position.saturating_sub(self.track_start);
+        self.last_position_update = relative;
+        _ = self
+            .event_sender
+            .send(EngineEvent::PositionChanged(relative));
+    }
+
+    fn handle_play(&mut self, fade_in: bool) {
+        match self.state {
+            AudioEngineState::Playing => {
+                // Reversal: a pause fade-out is in flight — fade back in instead.
+                if matches!(self.fade_intent, FadeIntent::PauseOut) {
+                    self.output.begin_fade(None, 1.0, FADE_PAUSE_MS);
+                    self.fade_intent = FadeIntent::PlayIn;
+                }
+            }
+            AudioEngineState::TrackNotSet => {
+                if self.preparing {
+                    self.pending_play = Some(fade_in);
+                    self.prepare_started.get_or_insert_with(Instant::now);
+                }
+            }
+            AudioEngineState::Paused => {
+                self.set_state(AudioEngineState::Playing);
+                _ = self.event_sender.send(EngineEvent::Playing);
+                if fade_in {
+                    self.output.begin_fade(Some(0.0), 1.0, FADE_PAUSE_MS);
+                    self.fade_intent = FadeIntent::PlayIn;
+                }
+                self.release_at = None;
+                self.output.resume();
+            }
+        }
+    }
+
+    fn handle_pause(&mut self) {
+        match self.state {
+            AudioEngineState::Paused => {}
+            AudioEngineState::Playing if self.buffering => {
+                if let FadeIntent::SeekOut(position) = self.fade_intent {
+                    self.do_seek(position);
+                }
+                self.output.reset_fade();
+                self.pause_now();
+            }
+            AudioEngineState::Playing => {
+                if matches!(self.fade_intent, FadeIntent::PauseOut) {
+                    return;
+                }
+                // If a seek fade-out hasn't applied its jump yet, apply it now so
+                // we pause at the position the user actually selected rather than
+                // the pre-seek one (the slider already moved there).
+                if let FadeIntent::SeekOut(position) = self.fade_intent {
+                    self.do_seek(position);
+                }
+                // Stay in Playing and keep feeding the buffer so the ramp is
+                // smooth; the real pause + `Paused` event fire on completion.
+                self.output.begin_fade(None, 0.0, FADE_PAUSE_MS);
+                self.fade_intent = FadeIntent::PauseOut;
+            }
+            AudioEngineState::TrackNotSet => {
+                if self.pending_play.take().is_some() {
+                    self.prepare_started = None;
+                    self.set_buffering(false);
+                    _ = self.event_sender.send(EngineEvent::Paused);
+                }
+            }
+        }
+    }
+
+    /// Acts on a fade ramp that just completed in the audio callback. Returns
+    /// `true` if the engine transitioned to a parked (paused) state and the
+    /// run loop should restart.
+    fn handle_fade_event(&mut self) -> bool {
+        let Some(event) = self.output.take_fade_event() else {
+            return false;
+        };
+
+        match (event, self.fade_intent) {
+            (FadeEvent::FadedOut, FadeIntent::PauseOut) => {
+                self.fade_intent = FadeIntent::None;
+                // No clear: the un-played buffered samples stay pristine so the
+                // next fade-in resumes from the exact same spot.
+                self.pause_output();
+                self.set_state(AudioEngineState::Paused);
+                _ = self.event_sender.send(EngineEvent::Paused);
+                true
+            }
+            (FadeEvent::FadedOut, FadeIntent::SeekOut(position)) => {
+                self.do_seek(position);
+                self.output.begin_fade(Some(0.0), 1.0, FADE_SEEK_MS);
+                self.fade_intent = FadeIntent::SeekIn;
+                false
+            }
+            (FadeEvent::FadedIn, FadeIntent::PlayIn) => {
+                self.fade_intent = FadeIntent::None;
+                false
+            }
+            (FadeEvent::FadedIn, FadeIntent::SeekIn) => {
+                self.fade_intent = FadeIntent::None;
+                false
+            }
+            _ => false,
+        }
+    }
+
+    fn set_state(&mut self, state: AudioEngineState) {
+        log::trace!("audio_engine: new state: {:?}", state);
+        self.state = state;
+        if state != AudioEngineState::Playing {
+            self.starved_since = None;
+            if !self.preparing {
+                self.set_buffering(false);
+            }
+        }
+    }
+}
+
+fn frames_until(track_end: Duration, position: Duration, sample_rate: u32) -> usize {
+    let remaining = track_end.saturating_sub(position);
+    (remaining.as_secs_f64() * sample_rate as f64).round() as usize
+}
+
+/// How much shorter than the decoded file a track may claim to be before we
+/// believe it and trim.
+///
+/// Tag durations are quantised to whole milliseconds when a library is indexed,
+/// while the decoder reports a sample-exact length. A track that really is the
+/// whole file therefore looks up to a millisecond shorter than it is, and
+/// trimming at that point clips the last fraction of a millisecond of audio
+/// from every affected track. Anything within this slack is that rounding, not
+/// a real boundary.
+const TAG_DURATION_SLACK: Duration = Duration::from_millis(2);
+
+/// The point at which a track's audio should be cut short, or `None` when the
+/// track runs to the end of the file.
+///
+/// A `Some` here means a genuine sub-range: a cue sheet track, or a tag that
+/// describes only part of the file.
+fn bounded_track_end(track_end: Duration, file_duration: Duration) -> Option<Duration> {
+    if track_end.saturating_add(TAG_DURATION_SLACK) < file_duration {
+        Some(track_end)
+    } else {
+        None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn frames_until_counts_whole_frames_to_the_end() {
+        let end = Duration::from_secs(10);
+        assert_eq!(frames_until(end, Duration::from_secs(9), 44100), 44100);
+        assert_eq!(frames_until(end, end, 44100), 0);
+        assert_eq!(frames_until(end, Duration::from_secs(11), 44100), 0);
+        assert_eq!(
+            frames_until(end, end - Duration::from_nanos(5_000), 44100),
+            0
+        );
+    }
+
+    fn ms(value: u64) -> Duration {
+        Duration::from_millis(value)
+    }
+
+    #[test]
+    fn a_whole_file_track_is_never_trimmed_for_tag_rounding() {
+        // The real regression: a 200.7 s file indexed as 200700 ms still claims
+        // 0.7 ms less than the decoder reports, and used to lose that audio.
+        let file = ms(200_700) + Duration::from_nanos(700_000);
+        assert_eq!(bounded_track_end(ms(200_700), file), None);
+    }
+
+    #[test]
+    fn rounding_the_other_way_is_also_not_a_boundary() {
+        // Indexed duration can land a hair past the decoded length.
+        let file = ms(200_700);
+        assert_eq!(bounded_track_end(ms(200_701), file), None);
+    }
+
+    #[test]
+    fn an_exact_match_is_not_a_boundary() {
+        let file = ms(200_700);
+        assert_eq!(bounded_track_end(file, file), None);
+    }
+
+    #[test]
+    fn a_cue_sheet_track_still_stops_at_its_own_end() {
+        let file = ms(300_000);
+        assert_eq!(bounded_track_end(ms(200_000), file), Some(ms(200_000)));
+    }
+
+    #[test]
+    fn a_tag_describing_part_of_the_file_still_trims() {
+        let file = ms(300_000);
+        assert_eq!(bounded_track_end(ms(120_500), file), Some(ms(120_500)));
+    }
+
+    #[test]
+    fn a_cue_that_ends_at_the_file_end_is_left_alone() {
+        // Only differs from the file by rounding, so there is nothing to cut.
+        let file = ms(300_000);
+        assert_eq!(bounded_track_end(ms(299_999), file), None);
+    }
+}

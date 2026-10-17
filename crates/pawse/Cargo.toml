@@ -1,0 +1,101 @@
+[package]
+name = "pawse"
+version.workspace = true
+edition.workspace = true
+publish = false
+authors = ["Aleksandr Popov <popov.psk@gmail.com>"]
+description = "Pulse - a private, offline-first music player"
+license = "MIT"
+
+[[bin]]
+name = "pulse"
+path = "src/main.rs"
+
+[dependencies]
+rusqlite = { version = "0.40", features = ["bundled"] }
+gpui.workspace = true
+gpui_platform.workspace = true
+gpui-component.workspace = true
+audio_engine = { path = "../audio_engine" }
+audio_output = { path = "../audio_output" }
+music_library = { path = "../music_library" }
+music_indexer = { path = "../music_indexer" }
+tag_writer = { path = "../tag_writer" }
+pawse_remote = { path = "../pawse_remote" }
+lyrics = { path = "../lyrics" }
+cover_search = { path = "../cover_search" }
+diagnostics = { workspace = true }
+log = { workspace = true }
+rfd = "0.17"
+flume = "0.12.0"
+notify = "8"
+rlimit = "0.11"
+anyhow.workspace = true
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+dirs = "6"
+ui_components = { path = "../ui_components" }
+ui_resources = { path = "../ui_resources" }
+media_integration = { path = "../media_integration" }
+discord = { path = "../discord" }
+nucleo-matcher = "0.3"
+rand = "0.9"
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "gif", "bmp", "webp"] }
+
+interprocess = "2"
+
+[package.metadata.packager]
+product-name = "Pulse"
+identifier = "dev.pulse.app"
+category = "Music"
+long-description = """
+Pulse is a native music player for a local library: it indexes your folders, \
+browses by artist, album and playlist, and plays gapless with bit-perfect output \
+where the platform allows it.
+"""
+icons = [
+    "../ui_resources/assets/app-icon/32x32.png",
+    "../ui_resources/assets/app-icon/128x128.png",
+    "../ui_resources/assets/app-icon/256x256.png",
+]
+
+[package.metadata.packager.pacman]
+depends = [
+    "alsa-lib",
+    "dbus",
+    "fontconfig",
+    "hicolor-icon-theme",
+    "libxcb",
+    "libxkbcommon",
+    "libxkbcommon-x11",
+    "vulkan-icd-loader",
+    "wayland",
+]
+
+[package.metadata.packager.pacman.files]
+"../../LICENSE" = "/usr/share/licenses/pulse-bin/LICENSE"
+
+[package.metadata.packager.deb]
+section = "sound"
+depends = [
+    "libasound2",
+    "libdbus-1-3",
+    "libvulkan1",
+    "libwayland-client0",
+    "libxcb1",
+    "libxkbcommon0",
+    "libxkbcommon-x11-0",
+    "fontconfig-config",
+    "hicolor-icon-theme",
+]
+
+[package.metadata.packager.deb.files]
+"../../LICENSE" = "/usr/share/doc/pulse/copyright"
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+rstest = "0.26"
+tempfile = "3"

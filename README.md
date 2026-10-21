@@ -4,107 +4,78 @@
 
 **A personal, local-first music player for Linux.**
 
-One library. One listener. No account, no cloud.
+One library. No account. No cloud.
 
 </div>
 
 ---
 
-Pulse runs in a single native window, indexes the music you already own, and
-tries hard to stay out of the way while it plays.
+## What it does
 
-## ✨ What it does
+**Library** — indexes the folders you choose and keeps watching them. Browse by
+album, artist, folder, playlist or one flat All tracks list; `Ctrl+K` searches
+everything; shift- and ctrl-click select rows across a list. Cue sheets are
+understood, and a re-rip or a moved folder doesn't lose your play history.
 
-### 📚 Library
-- 🗂️ Indexes folders you choose — and keeps watching them, so new files appear
-  without a click.
-- 🧹 **Duplicate finder** (Settings → Advanced): rank your folders once, best
-  first, and every song found in more than one of them keeps the copy from the
-  best folder. The rest move to the desktop Trash. Folders you do not list are
-  never touched.
-- 🎼 Browse by **album**, **artist**, **genre**, **folder**, **playlist**, or one
-  flat **All Tracks** list.
-- ⚡ **Ctrl+K** opens a command palette over everything.
-- ☑️ **Multi-select** in every track list: shift-click a range, ctrl-click to add,
-  then queue the lot or drop it into a playlist.
-- 💿 Cue-sheet aware, with an adoption layer so a re-rip or a moved folder
-  doesn't duplicate your play history.
+**Playback** — native sample rate through PipeWire, or an exclusive grab if you
+prefer. ReplayGain (per track or per album, with clipping protection) read from
+the tags your files already carry. A real play-next queue, shuffle and repeat,
+and a full-screen cover view.
 
-### ▶️ Playback
-- 🔊 Native sample rate through PipeWire, exclusively if you want it.
-- 📊 **ReplayGain** — per track or per album, with clipping protection, read from
-  the tags your files already carry (ReplayGain 2.0 and R128). Off by default, and
-  the native-sample-rate output is never touched.
-- ⏭️ A real **play-next queue** — queue a song and it plays next; queue more and
-  they follow in the order you queued them.
-- 🔀 Shuffle and repeat, an always-there **cover view**, and a now-playing bar
-  that tells the truth.
+**Editing** — a tag editor for one track or a whole album, including cover art
+and raw tag rows, followed by a rescan of exactly what changed. Lyrics from
+embedded tags, `.lrc` sidecars or LRCLIB, with a button to save what you fetched.
 
-### ✏️ Editing
-- 🏷️ **Tag editor** for one track or a whole album, with cover art and raw tag
-  rows, followed by a rescan of exactly what changed.
-- 📝 Lyrics from embedded tags, `.lrc` sidecars, or LRCLIB on request — and one
-  button to save what you fetched as a `.lrc` beside the track.
+**Housekeeping** — a duplicate finder that keeps one copy of each song by folder
+priority and trashes the rest, daily rotated database backups with one-click
+restore, an integrity report, and a portable export that carries its own data.
 
-### 🧭 Extras
-- 📊 **Rewind** — listening totals and your top artists, albums and tracks.
-- 🛟 **Data safety** — daily rotated database backups, one-click restore, and an
-  integrity report that counts problems without deleting anything.
-- 📦 **Portable export** — copy the program, optionally with your settings and
-  library, into a folder that carries its own data.
+**Phone remote** — an optional web UI, embedded in the binary: queue, folders,
+playlists, artists and the whole catalog.
 
-## 🔌 Offline by default
+## Offline by default
 
 Nothing touches the network unless you ask. Everything online lives on one
 **Settings → Online** page and starts off:
 
-| Feature | Default |
+| | Default |
 |---|---|
-| 🌐 Lyrics from the internet (LRCLIB) | off |
-| 🟣 Discord Rich Presence | off |
-| 📱 Remote control web server | off |
+| Lyrics from the internet (LRCLIB) | off |
+| Discord Rich Presence | off |
+| Remote control web server | off |
 
-No accounts, no analytics, no crash reporting, no scrobbling.
+No accounts, no analytics, no telemetry, no scrobbling.
 
-## 📋 Requirements
+## Requirements
 
-- 🐧 Linux with **PipeWire** and `pipewire-alsa`
-- 🦀 A Rust toolchain (to build from source)
-- 📚 `alsa-lib`, `libxkbcommon`, `libxcb` at runtime
+- Linux with **PipeWire** and `pipewire-alsa`
+- `alsa-lib`, `libxkbcommon`, `libxcb` at runtime
+- A Rust toolchain to build from source
 
-## 📥 Install
+## Install
 
-### Prebuilt binary
-
-Download the tarball from [Releases](../../releases), then:
+Prebuilt, from [Releases](../../releases):
 
 ```sh
 tar -xzf pulse-*-x86_64-linux.tar.gz
 install -m 755 pulse ~/.local/bin/pulse
 ```
 
-### From source
+From source:
 
 ```sh
 cargo build --release -p pulse
 install -m 755 target/release/pulse ~/.local/bin/pulse
 ```
 
-The crate is `pulse` and it produces a binary called `pulse`.
-
-The remote UI in `web/` is a Svelte app embedded into the binary at build time —
-rebuild it after changing anything there:
+The remote UI in `web/` is compiled into the binary, so build it before a
+release build or the binary ships without it (a debug build never embeds it):
 
 ```sh
 cd web && npm install && npm run build
 ```
 
-A **debug** build embeds nothing (`pulse_remote` only embeds `web/dist` in
-release), so `cargo run` with the remote turned on serves 404s until you build
-the web app or run Vite's dev server. Release builds need `web/dist/` to exist
-before `cargo build --release`, or the binary ships without a remote UI.
-
-## ⌨️ Keyboard
+## Keyboard
 
 | Key | Action |
 |---|---|
@@ -116,65 +87,45 @@ before `cargo build --release`, or the binary ships without a remote UI.
 | `Q` | queue the hovered track to play next |
 | `Esc` | leave the cover view |
 
-## 📂 Where things live
+## Where things live
 
-| What | Path |
+| | Path |
 |---|---|
-| ⚙️ Settings | `~/.config/pulse-music/settings.json` |
-| 💾 Library database | `~/.local/share/pulse-music/library.db` |
-| 🛟 Backups | `~/.local/share/pulse-music/backups/` |
-| 📜 Logs | `~/.local/share/pulse-music/logs/` |
-| 🖼️ Cache (covers, artwork) | `~/.cache/pulse-music/` |
+| Settings | `~/.config/pulse-music/settings.json` |
+| Library database | `~/.local/share/pulse-music/library.db` |
+| Backups | `~/.local/share/pulse-music/backups/` |
+| Logs | `~/.local/share/pulse-music/logs/` |
+| Covers and artwork | `~/.cache/pulse-music/` |
 
-The directory is `pulse-music` — never `~/.config/pulse`, which belongs to
-PipeWire-Pulse.
+The directory is `pulse-music`, never `~/.config/pulse` — that one belongs to
+PipeWire-Pulse. Set **`PULSE_HOME`** to move all of it into one directory, which
+is what makes an exported copy independent of the machine it came from.
 
-Set **`PULSE_HOME`** to point all of the above at one directory. That is what
-makes an exported copy independent of the machine it came from.
-
-## 🛠️ Development
+## Development
 
 ```sh
-cargo test --workspace     # ~955 tests
+make generate              # audio fixtures, once (needs ffmpeg)
+cargo test --workspace     # ~1,000 tests
 cargo clippy --workspace --all-targets
 ```
 
-A release build takes a few minutes; a no-op incremental build is under a
-second.
-
 ```
 crates/
-  pulse/            the application (binary name: pulse)
+  pulse/            the application (produces the `pulse` binary)
   pulse_remote/     remote control server + embedded web UI
-  music_library/    SQLite schema, queries, identity/adoption
+  music_library/    SQLite schema, queries, identity and adoption
   music_indexer/    scanning, tag parsing, cue sheets
-  audio_*/          playback engine, decoders, PipeWire/ALSA output
-  lyrics/           local and LRCLIB lyrics
   tag_writer/       metadata writing
+  audio_*/          decoder, engine, PipeWire/ALSA output
+  lyrics/           local and LRCLIB lyrics
   discord/          Rich Presence
 web/                the remote UI (Svelte)
 ```
 
-Each crate has a `doc.md` next to its source with the design notes: what it
-does, why it does it that way, and the parts that look wrong but are
-load-bearing.
+Every crate has a `doc.md` beside its source: what it does, why, and which parts
+look wrong but are load-bearing.
 
-## 📝 Notes
-
-- Crate, package, binary and on-disk names are all `pulse` / `pulse_remote` /
-  `pulse-music` now; the `pawse` spellings survive only in the legacy migration
-  and in old database rows (see below).
-- Track rows written by an older build may carry a `pawse-source://` locator. It
-  is recognised and treated as "no local file" rather than handed to the
-  decoder.
-- The playback queue is stored in `settings.json` as **locators** (id + path),
-  not as copies of each track. The catalog already holds the titles and covers,
-  so a re-tagged track shows its new title in the queue after a restart, and a
-  file that moved while the app was closed is found again by its id.
-- Motion is optional by design: every animation has its own switch plus a master
-  switch. Turned off, the app is exactly as usable — just still.
-
-## 📄 License
+## License
 
 MIT — see [`LICENSE`](LICENSE).
 

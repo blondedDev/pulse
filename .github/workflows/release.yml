@@ -67,7 +67,11 @@ jobs:
           cd dist
           tar -czf "../pulse-${GITHUB_REF_NAME}-x86_64-linux.tar.gz" .
           cd ..
-          sha256sum pulse-*.tar.gz > pulse-*.tar.gz.sha256
+          # Name the checksum after the archive explicitly: a glob in the
+          # redirect target does not expand, and the uploaded asset ended up
+          # called "pulse-.tar.gz.sha256".
+          ARCHIVE="pulse-${GITHUB_REF_NAME}-x86_64-linux.tar.gz"
+          sha256sum "$ARCHIVE" > "$ARCHIVE.sha256"
 
       - name: Attach to release
         if: startsWith(github.ref, 'refs/tags/')

@@ -23,10 +23,30 @@ jobs:
     steps:
       - name: Install build dependencies
         run: |
+          # The list has to cover everything pkg-config is asked for at build
+          # time, not just what the binary links: `yeslogic-fontconfig-sys`
+          # (via font-kit) and `xkbcommon-x11` are probed by their build
+          # scripts, and a missing one fails the build with a bare exit 101
+          # ten minutes in.
           pacman -Syu --noconfirm --needed \
             base-devel rust cargo git nodejs npm \
             pipewire alsa-lib clang cmake pkgconf \
-            libxkbcommon libxcb libx11 wayland
+            fontconfig freetype2 \
+            libxkbcommon libxkbcommon-x11 libxcb libx11 wayland \
+            vulkan-icd-loader
+
+      - name: Check build-time pkg-config dependencies
+        run: |
+          missing=0
+          for module in fontconfig freetype2 xkbcommon xkbcommon-x11 alsa; do
+            if pkg-config --exists "$module"; then
+              echo "ok   $module $(pkg-config --modversion "$module")"
+            else
+              echo "MISSING $module" >&2
+              missing=1
+            fi
+          done
+          exit $missing
 
       - uses: actions/checkout@v4
 

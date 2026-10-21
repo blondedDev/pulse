@@ -249,6 +249,15 @@ playing), and drive the `PlaybackQueue` on click.
   — `media_bindings` gives each its own identity. Do not "fix" the repeats by
   deduplicating here: the folder tab answers "what is in this folder", not "what
   albums do I own".
+  **The listing is built from `media_bindings`, not from `tracks`.** The two
+  files above do not both have a catalog row: the second one is adopted, and
+  adoption gives it a binding and nothing else. A query over `tracks` therefore
+  dropped it, and a folder with two copies of some songs looked short by
+  exactly those songs. A row is a binding — `id` is the item (both files share
+  it), `path` is the file, `available` is the file's own source (an unplugged
+  drive still lists its contents) — so nothing may identify a row by id alone.
+  Playback uses the index into `tracks_all`, the remote echoes the row's `path`
+  back with the command, and the gpui element id carries the position.
   **Shared**: album titles and artists come from an `AlbumMeta` map built once per
   source load from `albums()`, so regrouping on a filter keystroke does no database
   reads (it used to query `album_title` per group per keystroke). Each album header

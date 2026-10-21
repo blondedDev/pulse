@@ -65,6 +65,11 @@ artist grouping, so the server never sees `LibraryService`.
   `/api/folder` answers with the whole subtree in the library's display order.
   `FolderEntry.track_count` is that subtree count, so the UI can offer "all
   tracks in this folder" without downloading them first.
+- **A `/api/folder` row is a file, not a song.** One song adopted from two
+  folders is two files sharing one id, so each row carries its `path` and the
+  two folder commands send it back. Without it the id alone picks whichever
+  row the query happened to return first. Playlists and `/api/tracks` are
+  catalog rows and leave `path` out.
 - **`/api/tracks` is the entire catalog.** It is a few hundred kilobytes on a
   large library; the web app renders it in pages of 200 rather than all at once.
 - **No authentication.** The server binds `0.0.0.0` on the configured port and

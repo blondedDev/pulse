@@ -8,7 +8,7 @@ mod assets;
 mod http;
 
 pub const DEFAULT_PORT: u16 = 8770;
-pub const PROTOCOL_VERSION: u32 = 4;
+pub const PROTOCOL_VERSION: u32 = 5;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CoverSize {
@@ -74,6 +74,12 @@ pub struct PlaylistTrack {
     pub artist: Option<String>,
     pub cover_id: Option<i64>,
     pub duration_ms: u64,
+    /// Present only in folder listings. A folder row is a *file*, and one song
+    /// adopted from two folders is two files sharing one id, so the id alone
+    /// cannot say which one was tapped. Playlists and the all-tracks list are
+    /// catalog rows and leave this empty.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
 }
 
 #[derive(Clone, serde::Serialize)]
@@ -240,10 +246,15 @@ pub enum Command {
     PlayFolderTrack {
         path: String,
         track_id: i64,
+        /// The row's own file. Older clients omit it and fall back to the id.
+        #[serde(default)]
+        file: Option<String>,
     },
     QueueFolderTrack {
         path: String,
         track_id: i64,
+        #[serde(default)]
+        file: Option<String>,
     },
     QueueFolder {
         path: String,

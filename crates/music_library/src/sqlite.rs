@@ -41,6 +41,42 @@ const PLAYLIST_ENTRY_COLUMNS: &str = "m.id, COALESCE(t.path, b.source_key, ''), 
 
 const PLACEHOLDER_SOURCE_ID: i64 = 1;
 
+/// One row per **file**, which is what a folder view shows.
+///
+/// A folder is a view of files on disk, not of canonical catalog paths. An
+/// adopted duplicate — the same song present in two library folders — exists
+/// only as a `media_bindings` row and has no `tracks` row of its own, so a
+/// query over `tracks` cannot see it and the folder silently loses songs.
+/// Building from bindings fixes that; the item still supplies the tags.
+///
+/// `MIN(b3.id)` collapses one file reached through two overlapping library
+/// roots down to the lowest source binding, the same priority rule
+/// `playback_locators` uses, so overlapping roots do not double-count.
+const FOLDER_ENTRY_FROM: &str = "FROM media_bindings b \
+     JOIN media_items m ON m.id = b.item_id \
+     JOIN sources s ON s.id = b.source_id AND s.enabled = 1 \
+     LEFT JOIN tracks t ON t.id = m.id \
+     LEFT JOIN albums al ON al.id = t.album_id \
+     LEFT JOIN album_artists aa ON aa.album_id = al.id AND aa.position = 0 \
+     LEFT JOIN artists art ON art.id = aa.artist_id \
+     WHERE b.present = 1 \
+       AND b.id = (SELECT MIN(b3.id) FROM media_bindings b3 \
+                   JOIN sources s3 ON s3.id = b3.source_id AND s3.enabled = 1 \
+                   WHERE b3.present = 1 AND b3.source_key = b.source_key \
+                     AND b3.start_offset_ms = b.start_offset_ms)";
+
+/// The row a folder listing returns. Same shape as `TRACK_COLUMNS`, except the
+/// path is this file's own and the item may have no `tracks` row at all.
+///
+/// `available` comes from the file's own source, so an unplugged drive still
+/// lists its files with the rest. Do not copy `PLAYLIST_ENTRY_COLUMNS`, which
+/// ties availability to a catalog row existing.
+const FOLDER_ENTRY_COLUMNS: &str = "m.id, b.source_key, COALESCE(t.title, m.title), \
+    t.album_id, t.track_number, COALESCE(t.disc_number, 1), \
+    COALESCE(t.duration_ms, m.duration_ms), t.year, \
+    COALESCE(t.cover_art_id, m.cover_art_id), b.start_offset_ms, t.bitrate, \
+    COALESCE(t.is_cue, 0), s.available";
+
 /// The tail every album-grouped display list sorts by, after the album title.
 ///
 /// `al.id` is not decoration. Albums merge on the **exact** title
@@ -2071,10 +2107,11 @@ impl LibraryRepository for SqliteLibrary {
                 continue;
             }
             let pattern = folder_like_pattern(&path);
-            let mut stmt = conn.prepare_cached(
-                "SELECT COUNT(*), COUNT(DISTINCT album_id) FROM tracks \
-                 WHERE path LIKE ?1 ESCAPE '\\'",
-            )?;
+            let pattern_sql = format!(
+                "SELECT COUNT(*), COUNT(DISTINCT t.album_id) {FOLDER_ENTRY_FROM} \
+                 AND b.source_key LIKE ?1 ESCAPE '\\'"
+            );
+            let mut stmt = conn.prepare_cached(&pattern_sql)?;
             let (track_count, album_count): (i64, i64) = stmt
                 .query_row([&pattern], |row| Ok((row.get(0)?, row.get(1)?)))
                 .map_err(LibraryError::Database)?;
@@ -2097,8 +2134,11 @@ impl LibraryRepository for SqliteLibrary {
         let conn = self.conn.lock().unwrap();
         let base = clean_dir(path);
         let base_path = PathBuf::from(&base);
-        let mut stmt = conn
-            .prepare_cached("SELECT path, album_id FROM tracks WHERE path LIKE ?1 ESCAPE '\\'")?;
+        let sql = format!(
+            "SELECT b.source_key, t.album_id {FOLDER_ENTRY_FROM} \
+             AND b.source_key LIKE ?1 ESCAPE '\\'"
+        );
+        let mut stmt = conn.prepare_cached(&sql)?;
         let rows = stmt
             .query_map([folder_like_pattern(&base)], |row| {
                 Ok((row.get::<_, String>(0)?, row.get::<_, Option<i64>>(1)?))
@@ -2155,13 +2195,11 @@ impl LibraryRepository for SqliteLibrary {
         let conn = self.conn.lock().unwrap();
         let pattern = folder_like_pattern(&clean_dir(path));
         let sql = format!(
-            "SELECT {TRACK_COLUMNS_T} FROM tracks t \
-             LEFT JOIN albums al ON al.id = t.album_id \
-             LEFT JOIN album_artists aa ON aa.album_id = al.id AND aa.position = 0 \
-             LEFT JOIN artists art ON art.id = aa.artist_id \
-             WHERE t.path LIKE ?1 ESCAPE '\\' \
+            "SELECT {FOLDER_ENTRY_COLUMNS} {FOLDER_ENTRY_FROM} \
+             AND b.source_key LIKE ?1 ESCAPE '\\' \
              ORDER BY art.sort_name COLLATE NOCASE, COALESCE(al.year, 0), \
-             al.title COLLATE NOCASE, {ALBUM_RUN_TIEBREAK}",
+             al.title COLLATE NOCASE, {ALBUM_RUN_TIEBREAK}, \
+             b.source_key, b.start_offset_ms",
         );
         let mut stmt = conn.prepare_cached(&sql)?;
         let rows = stmt.query_map([pattern], map_track_row)?;
@@ -2185,8 +2223,11 @@ impl LibraryRepository for SqliteLibrary {
     fn direct_track_count(&self, path: &str) -> Result<i64> {
         let conn = self.conn.lock().unwrap();
         let base = clean_dir(path);
-        let mut stmt = conn
-            .prepare_cached("SELECT path FROM tracks WHERE path LIKE ?1 ESCAPE '\\'")?;
+        let sql = format!(
+            "SELECT b.source_key {FOLDER_ENTRY_FROM} \
+             AND b.source_key LIKE ?1 ESCAPE '\\'"
+        );
+        let mut stmt = conn.prepare_cached(&sql)?;
         let rows = stmt.query_map([folder_like_pattern(&base)], |row| row.get::<_, String>(0))?;
         let mut count = 0i64;
         for row in rows {
@@ -3681,6 +3722,43 @@ pub fn sha256_hex(data: &[u8]) -> String {
     format!("{:x}", hash)
 }
 
+/// Test fixtures, not the scan path. Putting a file into a source by hand is
+/// what lets the library tests build multi-folder libraries without scanning.
+#[cfg(test)]
+impl SqliteLibrary {
+    /// Give `item_id` the item and binding a scan would have left for `path`.
+    pub(crate) fn place_for_tests(&self, item_id: i64, root: &str, path: &str) {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT OR IGNORE INTO sources (kind, name, uri, enabled, available) \
+             VALUES ('local', ?1, ?1, 1, 1)",
+            [root],
+        )
+        .unwrap();
+        let source_id: i64 = conn
+            .query_row(
+                "SELECT id FROM sources WHERE kind = 'local' AND uri = ?1",
+                [root],
+                |row| row.get(0),
+            )
+            .unwrap();
+        conn.execute(
+            "INSERT OR IGNORE INTO media_items (id, kind, title) \
+             SELECT ?1, 'track', title FROM tracks WHERE id = ?1",
+            [item_id],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT OR IGNORE INTO media_bindings \
+             (item_id, source_id, source_key, start_offset_ms, present, last_seen_scan, \
+              last_seen_at) \
+             VALUES (?1, ?2, ?3, 0, 1, 1, 0)",
+            rusqlite::params![item_id, source_id, path],
+        )
+        .unwrap();
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3832,17 +3910,34 @@ mod tests {
         assert_eq!(count, 2);
     }
 
+    /// Add a file the way a scan leaves it: a catalog row, an item, and a
+    /// binding under a local root.
+    ///
+    /// A folder view lists *files*, so a catalog row with no binding is
+    /// invisible to it — and that is the point of the bug this replaced.
+    fn add_track_under(lib: &SqliteLibrary, root: &str, path: &str) -> i64 {
+        let id = lib
+            .upsert_track(
+                &NewTrack {
+                    path: path.into(),
+                    title: None,
+                    ..Default::default()
+                },
+                None,
+                &[],
+            )
+            .unwrap();
+        lib.place_for_tests(id, root, path);
+        id
+    }
+
+    /// Add a file whose own directory is its library root.
     fn add_track(lib: &SqliteLibrary, path: &str) {
-        lib.upsert_track(
-            &NewTrack {
-                path: path.into(),
-                title: None,
-                ..Default::default()
-            },
-            None,
-            &[],
-        )
-        .unwrap();
+        let root = std::path::Path::new(path)
+            .parent()
+            .map(|p| p.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "/".to_string());
+        add_track_under(lib, &root, path);
     }
 
     #[test]
@@ -4044,6 +4139,92 @@ mod tests {
         );
     }
 
+    /// The bug this pair of tests pins down: a song adopted from a second
+    /// folder has no `tracks` row of its own, so a folder view built from the
+    /// catalog dropped it and the folder looked short by a few songs.
+    #[test]
+    fn a_folder_lists_an_adopted_copy_that_has_no_catalog_row_of_its_own() {
+        let lib = open_test_lib();
+        let id = add_track_under(&lib, "/a", "/a/DAMN/01.flac");
+        lib.place_for_tests(id, "/b", "/b/DAMN/01.m4a");
+
+        let a: Vec<String> = lib
+            .tracks_in_folder("/a/DAMN")
+            .unwrap()
+            .into_iter()
+            .map(|t| t.path)
+            .collect();
+        let b = lib.tracks_in_folder("/b/DAMN").unwrap();
+        let b_paths: Vec<&str> = b.iter().map(|t| t.path.as_str()).collect();
+
+        assert_eq!(a, vec!["/a/DAMN/01.flac".to_string()]);
+        assert_eq!(b_paths, vec!["/b/DAMN/01.m4a"]);
+        assert_eq!(b[0].id, id, "both files are the same song");
+        assert!(b[0].available, "the file is on disk right now");
+    }
+
+    #[test]
+    fn every_folder_count_counts_files_the_listing_shows() {
+        let lib = open_test_lib();
+        let id = add_track_under(&lib, "/a", "/a/DAMN/01.flac");
+        lib.place_for_tests(id, "/b", "/b/DAMN/01.m4a");
+        add_track_under(&lib, "/b", "/b/GNX/02.m4a");
+
+        let roots: Vec<(String, i64)> = lib
+            .folder_roots()
+            .unwrap()
+            .into_iter()
+            .map(|r| (r.path, r.track_count))
+            .collect();
+        assert_eq!(
+            roots,
+            vec![("/a".to_string(), 1), ("/b".to_string(), 2)],
+            "each root counts its own files"
+        );
+
+        let child: Vec<(String, i64)> = lib
+            .child_folders("/b")
+            .unwrap()
+            .into_iter()
+            .map(|f| (f.name, f.track_count))
+            .collect();
+        assert_eq!(child, vec![("DAMN".to_string(), 1), ("GNX".to_string(), 1)]);
+        assert_eq!(lib.direct_track_count("/b/DAMN").unwrap(), 1);
+        assert_eq!(lib.tracks_directly_in_folder("/b/DAMN").unwrap().len(), 1);
+    }
+
+    /// One file seen through two overlapping roots is one row, not two, and
+    /// availability follows the source rather than the catalog row.
+    #[test]
+    fn an_overlapping_root_does_not_list_a_file_twice() {
+        let lib = open_test_lib();
+        let id = add_track_under(&lib, "/music", "/music/x/a.flac");
+        lib.place_for_tests(id, "/music/x", "/music/x/a.flac");
+
+        let rows = lib.tracks_in_folder("/music").unwrap();
+        assert_eq!(rows.len(), 1, "one file, one row");
+        assert_eq!(rows[0].path, "/music/x/a.flac");
+        assert_eq!(lib.direct_track_count("/music/x").unwrap(), 1);
+    }
+
+    #[test]
+    fn a_folder_still_lists_files_on_an_unavailable_source() {
+        let lib = open_test_lib();
+        add_track_under(&lib, "/a", "/a/x.flac");
+        {
+            let conn = lib.conn.lock().unwrap();
+            conn.execute(
+                "UPDATE sources SET available = 0 WHERE kind = 'local' AND uri = '/a'",
+                [],
+            )
+            .unwrap();
+        }
+
+        let rows = lib.tracks_in_folder("/a").unwrap();
+        assert_eq!(rows.len(), 1);
+        assert!(!rows[0].available, "the drive is unplugged, not the file gone");
+    }
+
     #[test]
     fn folder_roots_skips_roots_with_no_tracks_and_tolerates_trailing_slashes() {
         let lib = open_test_lib();
@@ -4058,7 +4239,9 @@ mod tests {
             },
         ])
         .unwrap();
-        add_track(&lib, "/music/Rock/a.flac");
+        // Same trailing slash as the registered root, so this reuses that
+        // source rather than creating a second one.
+        add_track_under(&lib, "/music/", "/music/Rock/a.flac");
 
         let roots = lib.folder_roots().unwrap();
         assert_eq!(roots.len(), 1, "the empty root must not be listed");

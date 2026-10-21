@@ -143,12 +143,12 @@
 
   function playTrack(track: PlaylistTrack) {
     if (current === null) return;
-    remote.playFolderTrack(current.path, track.id);
+    remote.playFolderTrack(current.path, track.id, track.path);
   }
 
   function queueTrack(track: PlaylistTrack) {
     if (current === null) return;
-    remote.queueFolderTrack(current.path, track.id);
+    remote.queueFolderTrack(current.path, track.id, track.path);
     showToast(`Queued: ${track.title}`);
   }
 
@@ -200,7 +200,7 @@
       {#if detail.tracks.length === 0}
         <p class="px-3 py-10 text-center text-sm text-neutral-500">No tracks in this folder</p>
       {:else}
-        {#each detail.tracks.slice(0, shown) as track (track.id)}
+        {#each detail.tracks.slice(0, shown) as track (track.path ?? track.id)}
           <TrackRow {remote} {track} onplay={() => playTrack(track)} onqueue={() => queueTrack(track)} />
         {/each}
         {#if detail.tracks.length > shown}

@@ -77,6 +77,7 @@ impl pulse_remote::LibraryReader for TestLibrary {
                 artist: Some("Smoke Artist".into()),
                 cover_id: Some(7),
                 duration_ms: 1000,
+                path: None,
             }],
         })
     }
@@ -122,6 +123,7 @@ fn smoke_track() -> pulse_remote::PlaylistTrack {
         artist: Some("Smoke Artist".into()),
         cover_id: Some(7),
         duration_ms: 1000,
+        path: None,
     }
 }
 
@@ -140,7 +142,10 @@ fn serves_state_snapshot() {
     });
 
     let body = wait_for_state(addr);
-    assert!(body.contains("\"v\":4"), "body: {body}");
+    assert!(
+        body.contains(&format!("\"v\":{}", pulse_remote::PROTOCOL_VERSION)),
+        "body: {body}"
+    );
     assert!(body.contains("Smoke Track"), "body: {body}");
     assert!(body.contains("\"playing\":true"), "body: {body}");
     assert!(body.contains("\"repeat\":\"off\""), "body: {body}");

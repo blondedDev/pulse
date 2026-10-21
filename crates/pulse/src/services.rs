@@ -635,12 +635,16 @@ fn apply_remote_command(cx: &mut App, command: pulse_remote::Command) {
             track_id,
         } => queue_playlist_track(cx, playlist_id, track_id),
         pulse_remote::Command::QueuePlaylist { playlist_id } => queue_playlist(cx, playlist_id),
-        pulse_remote::Command::PlayFolderTrack { path, track_id } => {
-            play_folder_track(cx, &path, track_id)
-        }
-        pulse_remote::Command::QueueFolderTrack { path, track_id } => {
-            queue_folder_track(cx, &path, track_id)
-        }
+        pulse_remote::Command::PlayFolderTrack {
+            path,
+            track_id,
+            file,
+        } => play_folder_track(cx, &path, track_id, file.as_deref()),
+        pulse_remote::Command::QueueFolderTrack {
+            path,
+            track_id,
+            file,
+        } => queue_folder_track(cx, &path, track_id, file.as_deref()),
         pulse_remote::Command::QueueFolder { path } => queue_folder(cx, &path),
         pulse_remote::Command::PlayAllTrack { track_id } => play_all_track(cx, track_id),
         pulse_remote::Command::QueueAllTrack { track_id } => queue_all_track(cx, track_id),
@@ -726,9 +730,9 @@ fn queue_playlist_track(cx: &mut App, playlist_id: i64, track_id: i64) {
     }
 }
 
-fn play_folder_track(cx: &mut App, path: &str, track_id: i64) {
+fn play_folder_track(cx: &mut App, path: &str, track_id: i64, file: Option<&str>) {
     let tracks = cx.global::<Services>().library.tracks_in_folder(path);
-    let Some(index) = tracks.iter().position(|t| t.id == track_id) else {
+    let Some(index) = tracks.iter().position(|t| folder_row_is(t, track_id, file)) else {
         return;
     };
     let tracks: Vec<Rc<Track>> = tracks.into_iter().map(Rc::new).collect();
@@ -744,16 +748,23 @@ fn play_folder_track(cx: &mut App, path: &str, track_id: i64) {
     );
 }
 
-fn queue_folder_track(cx: &mut App, path: &str, track_id: i64) {
+fn queue_folder_track(cx: &mut App, path: &str, track_id: i64, file: Option<&str>) {
     let track = cx
         .global::<Services>()
         .library
         .tracks_in_folder(path)
         .into_iter()
-        .find(|t| t.id == track_id);
+        .find(|t| folder_row_is(t, track_id, file));
     if let Some(track) = track {
         crate::track_list::append_tracks_to_queue(vec![Rc::new(track)], cx);
     }
+}
+
+/// A folder row is one file. Two copies of a song adopted from two folders are
+/// two rows with one id, so the file disambiguates; clients that do not send it
+/// get the first match, which is what the id-only lookup used to do.
+fn folder_row_is(track: &Track, track_id: i64, file: Option<&str>) -> bool {
+    track.id == track_id && file.is_none_or(|file| track.path == file)
 }
 
 fn queue_folder(cx: &mut App, path: &str) {

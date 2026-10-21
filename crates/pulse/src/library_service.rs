@@ -244,13 +244,18 @@ impl pulse_remote::LibraryReader for LibraryAccess {
 
     fn folder(&self, path: &str) -> Option<pulse_remote::FolderDetail> {
         let tracks = self.repo.tracks_in_folder(path).ok()?;
+        let paths: Vec<String> = tracks.iter().map(|t| t.path.clone()).collect();
+        let mut rows = to_playlist_tracks(&*self.repo, tracks);
+        for (row, file) in rows.iter_mut().zip(paths) {
+            row.path = Some(file);
+        }
         Some(pulse_remote::FolderDetail {
             path: path.to_string(),
             name: std::path::Path::new(path)
                 .file_name()
                 .map(|name| name.to_string_lossy().into_owned())
                 .unwrap_or_else(|| path.to_string()),
-            tracks: to_playlist_tracks(&*self.repo, tracks),
+            tracks: rows,
         })
     }
 
@@ -274,6 +279,7 @@ fn to_playlist_tracks(
             artist: artists.get(&t.id).and_then(|a| a.first().cloned()),
             cover_id: t.cover_art_id,
             duration_ms: t.duration_ms.unwrap_or(0).max(0) as u64,
+            path: None,
         })
         .collect()
 }

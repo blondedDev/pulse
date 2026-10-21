@@ -70,6 +70,9 @@ export type PlaylistTrack = {
   artist: string | null;
   cover_id: number | null;
   duration_ms: number;
+  /// Folder rows only: the file this row is. One song adopted from two folders
+  /// is two rows sharing one id.
+  path?: string | null;
 };
 
 export type PlaylistDetail = {
@@ -109,8 +112,8 @@ type Cmd =
   | { cmd: "play_playlist_track"; playlist_id: number; track_id: number }
   | { cmd: "queue_playlist_track"; playlist_id: number; track_id: number }
   | { cmd: "queue_playlist"; playlist_id: number }
-  | { cmd: "play_folder_track"; path: string; track_id: number }
-  | { cmd: "queue_folder_track"; path: string; track_id: number }
+  | { cmd: "play_folder_track"; path: string; track_id: number; file?: string | null }
+  | { cmd: "queue_folder_track"; path: string; track_id: number; file?: string | null }
   | { cmd: "queue_folder"; path: string }
   | { cmd: "play_all_track"; track_id: number }
   | { cmd: "queue_all_track"; track_id: number };
@@ -390,12 +393,12 @@ export class Remote {
     this.#send({ cmd: "queue_playlist", playlist_id: playlistId });
   }
 
-  playFolderTrack(path: string, trackId: number) {
-    this.#send({ cmd: "play_folder_track", path, track_id: trackId });
+  playFolderTrack(path: string, trackId: number, file?: string | null) {
+    this.#send({ cmd: "play_folder_track", path, track_id: trackId, file });
   }
 
-  queueFolderTrack(path: string, trackId: number) {
-    this.#send({ cmd: "queue_folder_track", path, track_id: trackId });
+  queueFolderTrack(path: string, trackId: number, file?: string | null) {
+    this.#send({ cmd: "queue_folder_track", path, track_id: trackId, file });
   }
 
   queueFolder(path: string) {

@@ -1083,7 +1083,11 @@ fn artist_track_row(
         .child(track_duration(cx, track.base.duration.clone()))
         .child(play_next_button(track_for_queue.clone(), 26., 16., &p.buttons))
         .child(add_to_queue_button(track_for_queue, 26., 16., &p.buttons))
-        .id(ElementId::Integer(track_id as u64))
+        // A folder row is one *file*, and one song adopted from two folders is
+        // two rows with the same id, so the index has to name the row.
+        .id(ElementId::Name(
+            format!("track-{track_id}-{global_ix}").into(),
+        ))
         .on_hover(move |hovered: &bool, _, cx| {
             crate::track_list::note_hovered(cx, &track_for_hover, *hovered)
         })

@@ -3830,7 +3830,16 @@ mod tests {
             start_offset_ms: None,
             bitrate: None,
         };
-        lib.upsert_track(&track, album_id, artist_ids).unwrap()
+        let id = lib.upsert_track(&track, album_id, artist_ids).unwrap();
+        // A folder view lists files, and a file only exists through its
+        // binding, so a catalog row alone is not a scanned file.
+        if let Some(root) = std::path::Path::new(path)
+            .parent()
+            .map(|p| p.to_string_lossy().into_owned())
+        {
+            lib.place_for_tests(id, &root, path);
+        }
+        id
     }
 
     fn count_of(artists: &[ArtistSummary], id: i64) -> Option<i64> {

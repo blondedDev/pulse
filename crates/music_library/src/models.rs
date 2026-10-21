@@ -64,6 +64,73 @@ impl Track {
     }
 }
 
+/// ReplayGain as read from a file's tags.
+///
+/// Both scales live here because both are written in the wild: ReplayGain 2.0
+/// (`REPLAYGAIN_*` in dB against -18 LUFS) and R128/Opus (`R128_*` in Q7.8 LU
+/// against -23 LUFS). The indexer normalises R128 into dB at read time, so
+/// everything downstream is one unit.
+///
+/// Peaks are linear sample peaks (0..=1) and are only used to stop a positive
+/// gain from clipping.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct ReplayGain {
+    pub track_gain: Option<f32>,
+    pub track_peak: Option<f32>,
+    pub album_gain: Option<f32>,
+    pub album_peak: Option<f32>,
+}
+
+/// Anything louder than this is treated as a broken tag. Real gain values sit
+/// within ±20 dB; a stray "0.5" meant as a peak would otherwise blow the mix up.
+const MAX_GAIN_DB: f32 = 24.;
+
+impl ReplayGain {
+    pub fn is_empty(&self) -> bool {
+        self.track_gain.is_none() && self.album_gain.is_none()
+    }
+
+    /// The gain to apply, in dB, before clipping protection.
+    ///
+    /// Album mode falls back to the track value (and vice versa) because plenty
+    /// of rips carry only one of the two.
+    pub fn gain_db(&self, prefer_album: bool) -> Option<f32> {
+        let (first, second) = if prefer_album {
+            (self.album_gain, self.track_gain)
+        } else {
+            (self.track_gain, self.album_gain)
+        };
+        first.or(second).filter(|db| db.is_finite() && *db <= MAX_GAIN_DB)
+    }
+
+    /// The linear multiplier to put in the signal path.
+    ///
+    /// `limit_clipping` caps a positive gain at the headroom the peak allows, so
+    /// a track tagged +6 dB with a 0.9 peak is turned down to +0.9 dB instead of
+    /// clipping. A gain that would only turn the track down is never limited.
+    pub fn linear(&self, prefer_album: bool, limit_clipping: bool) -> f32 {
+        let Some(db) = self.gain_db(prefer_album) else {
+            return 1.0;
+        };
+        let db = if limit_clipping && db > 0.0 {
+            let peak = if prefer_album {
+                self.album_peak.or(self.track_peak)
+            } else {
+                self.track_peak
+            };
+            match peak {
+                Some(peak) if peak > 0.0 && peak.is_finite() => {
+                    db.min(-20.0 * peak.log10()).max(0.0)
+                }
+                _ => db,
+            }
+        } else {
+            db
+        };
+        10f32.powf(db / 20.0)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AlbumSummary {
     pub id: i64,
@@ -93,25 +160,6 @@ pub struct ArtistSummary {
     pub id: i64,
     pub name: String,
     pub sort_name: String,
-    pub track_count: i64,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum GenreSort {
-    #[default]
-    Artist,
-    Year,
-}
-
-impl GenreSort {
-    pub const ALL: [GenreSort; 2] = [GenreSort::Artist, GenreSort::Year];
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct GenreSummary {
-    pub key: String,
-    pub name: String,
     pub track_count: i64,
 }
 
@@ -161,6 +209,88 @@ pub fn split_folder_path(path: &str, separator: char) -> (&str, &str) {
 #[cfg(test)]
 mod tests {
     use super::split_folder_path;
+    use super::ReplayGain;
+
+    fn close(a: f32, b: f32) -> bool {
+        (a - b).abs() < 0.001
+    }
+
+    #[test]
+    fn no_tags_means_unity() {
+        let rg = ReplayGain::default();
+        assert!(rg.is_empty());
+        assert_eq!(rg.gain_db(false), None);
+        assert_eq!(rg.linear(false, true), 1.0);
+    }
+
+    #[test]
+    fn a_gain_becomes_a_linear_multiplier() {
+        let rg = ReplayGain {
+            track_gain: Some(-6.0),
+            ..ReplayGain::default()
+        };
+        // -6 dB is a half.
+        assert!(close(rg.linear(false, false), 0.501));
+    }
+
+    #[test]
+    fn album_and_track_modes_fall_back_to_each_other() {
+        let only_track = ReplayGain {
+            track_gain: Some(-3.0),
+            ..ReplayGain::default()
+        };
+        let only_album = ReplayGain {
+            album_gain: Some(-3.0),
+            ..ReplayGain::default()
+        };
+        assert_eq!(only_track.gain_db(true), Some(-3.0));
+        assert_eq!(only_album.gain_db(false), Some(-3.0));
+
+        let both = ReplayGain {
+            track_gain: Some(-3.0),
+            album_gain: Some(-5.0),
+            ..ReplayGain::default()
+        };
+        assert_eq!(both.gain_db(false), Some(-3.0));
+        assert_eq!(both.gain_db(true), Some(-5.0));
+    }
+
+    #[test]
+    fn clipping_protection_caps_a_positive_gain_at_the_peak_headroom() {
+        let rg = ReplayGain {
+            track_gain: Some(6.0),
+            track_peak: Some(0.9),
+            ..ReplayGain::default()
+        };
+        // 20*log10(1/0.9) is about 0.915 dB, not 6.
+        let limited_db = 20.0 * rg.linear(false, true).log10();
+        assert!(close(limited_db, 0.915));
+        // Without protection the full +6 dB is applied.
+        let full_db = 20.0 * rg.linear(false, false).log10();
+        assert!(close(full_db, 6.0));
+    }
+
+    #[test]
+    fn clipping_protection_never_turns_a_negative_gain_down_further() {
+        let rg = ReplayGain {
+            track_gain: Some(-8.0),
+            track_peak: Some(0.2),
+            ..ReplayGain::default()
+        };
+        // 0.2 peak would allow up to +14 dB; a negative gain is already safe.
+        let db = 20.0 * rg.linear(false, true).log10();
+        assert!(close(db, -8.0));
+    }
+
+    #[test]
+    fn an_implausible_gain_tag_is_ignored() {
+        let rg = ReplayGain {
+            track_gain: Some(90.0),
+            ..ReplayGain::default()
+        };
+        assert_eq!(rg.gain_db(false), None);
+        assert_eq!(rg.linear(false, false), 1.0);
+    }
     use std::path::MAIN_SEPARATOR;
 
     /// Covers the separator this machine's repository joins folder paths with.
@@ -321,7 +451,9 @@ pub struct StoredLyrics {
 /// A track ready for batched scan insertion. Unlike [`NewTrack`], the cover is
 /// referenced by content hash (resolved to a `cover_art_id` by the writer's
 /// in-memory cache) rather than by id, so the parse workers never touch the DB.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+///
+/// No `Eq`: the ReplayGain values are floats.
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct ScanTrack {
     pub path: String,
     pub title: Option<String>,
@@ -336,6 +468,7 @@ pub struct ScanTrack {
     pub cover_hash: Option<String>,
     pub start_offset_ms: Option<u64>,
     pub bitrate: Option<u32>,
+    pub replaygain: ReplayGain,
     pub is_cue: bool,
     pub lyrics: Vec<ScanLyrics>,
     pub file_size: Option<u64>,

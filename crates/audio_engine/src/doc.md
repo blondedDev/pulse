@@ -36,7 +36,7 @@ and the loop only polls that channel:
   blocked on the network so the decoder thread can exit.
 
 Opening a stream (reading the headers) also happens off the engine thread, in
-`pawse::playback_opener::PlaybackOpener::start`. It first sends `Command::Prepare { play,
+`pulse::playback_opener::PlaybackOpener::start`. It first sends `Command::Prepare { play,
 track_duration }`, which stops the old track and emits
 `EngineEvent::Preparing { duration }` so the UI switches to the new track (title,
 cover, a disabled slider at 0 with the catalog duration) before any audio; `SetStreamTrack` arrives when the

@@ -1,8 +1,8 @@
 # discord
 
-Self-contained Discord Rich Presence ("now playing"). No GPUI, no pawse
+Self-contained Discord Rich Presence ("now playing"). No GPUI, no pulse
 dependencies — a pure library the app drives through `DiscordHandle`. The
-GPUI/event wiring lives in `pawse::discord_bridge`.
+GPUI/event wiring lives in `pulse::discord_bridge`.
 
 ## Responsibilities
 
@@ -57,7 +57,7 @@ GPUI/event wiring lives in `pawse::discord_bridge`.
   budget, so resuming after a long pause can leave the profile blank for up to
   `MIN_INTERVAL` before the track reappears. Inherent to hide-on-pause — both
   the clear and the re-publish are `set_activity` calls.
-- **Unavailable ⇒ no UI.** `pawse::settings_view` omits the whole Discord group
+- **Unavailable ⇒ no UI.** `pulse::settings_view` omits the whole Discord group
   from the Online settings page
   when `is_available()` is false, rather than showing a dead toggle. Release
   builds bake the id in, so this only affects local builds without a `.env`;

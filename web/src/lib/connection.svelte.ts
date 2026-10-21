@@ -78,6 +78,19 @@ export type PlaylistDetail = {
   tracks: PlaylistTrack[];
 };
 
+export type FolderEntry = {
+  path: string;
+  name: string;
+  track_count: number;
+  album_count: number;
+};
+
+export type FolderDetail = {
+  path: string;
+  name: string;
+  tracks: PlaylistTrack[];
+};
+
 export type Status = "connecting" | "open" | "reconnecting";
 
 type Cmd =
@@ -95,7 +108,12 @@ type Cmd =
   | { cmd: "queue_artist_album"; artist_id: number; album_id: number | null; full: boolean }
   | { cmd: "play_playlist_track"; playlist_id: number; track_id: number }
   | { cmd: "queue_playlist_track"; playlist_id: number; track_id: number }
-  | { cmd: "queue_playlist"; playlist_id: number };
+  | { cmd: "queue_playlist"; playlist_id: number }
+  | { cmd: "play_folder_track"; path: string; track_id: number }
+  | { cmd: "queue_folder_track"; path: string; track_id: number }
+  | { cmd: "queue_folder"; path: string }
+  | { cmd: "play_all_track"; track_id: number }
+  | { cmd: "queue_all_track"; track_id: number };
 
 export class Remote {
   status = $state<Status>("connecting");
@@ -370,6 +388,26 @@ export class Remote {
 
   queuePlaylist(playlistId: number) {
     this.#send({ cmd: "queue_playlist", playlist_id: playlistId });
+  }
+
+  playFolderTrack(path: string, trackId: number) {
+    this.#send({ cmd: "play_folder_track", path, track_id: trackId });
+  }
+
+  queueFolderTrack(path: string, trackId: number) {
+    this.#send({ cmd: "queue_folder_track", path, track_id: trackId });
+  }
+
+  queueFolder(path: string) {
+    this.#send({ cmd: "queue_folder", path });
+  }
+
+  playAllTrack(trackId: number) {
+    this.#send({ cmd: "play_all_track", track_id: trackId });
+  }
+
+  queueAllTrack(trackId: number) {
+    this.#send({ cmd: "queue_all_track", track_id: trackId });
   }
 
   #send(cmd: Cmd) {

@@ -36,6 +36,10 @@ pub enum Command {
     },
     Pause,
     Seek(f32),
+    /// ReplayGain for the track about to play, as a linear multiplier. Sent on
+    /// its own so it never has to ride along with a track command; the shared
+    /// output applies it next to the volume.
+    SetTrackGain(f32),
     Stop,
     Fail(String),
     Shutdown,

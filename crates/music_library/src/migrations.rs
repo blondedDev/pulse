@@ -547,4 +547,20 @@ pub const MIGRATIONS: &[(i32, &str)] = &[
     // was ever stored was the rule set — the tracks were always computed — so
     // dropping the table costs nothing but a feature nobody asked for twice.
     (15, "DROP TABLE IF EXISTS smart_playlists;"),
+    // ReplayGain, in its own table rather than four more `tracks` columns: the
+    // catalog row is what every list renders, and the gain is read exactly once
+    // per track load. `tracks` is cleared and refilled by a scan, so the row
+    // cascades away with it and is written again by the same scan.
+    (
+        16,
+        r#"
+        CREATE TABLE track_gain (
+            track_id   INTEGER PRIMARY KEY REFERENCES tracks(id) ON DELETE CASCADE,
+            track_gain REAL,
+            track_peak REAL,
+            album_gain REAL,
+            album_peak REAL
+        );
+        "#,
+    ),
 ];

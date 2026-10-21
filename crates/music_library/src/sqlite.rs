@@ -15,7 +15,7 @@ use crate::error::{LibraryError, Result};
 use crate::migrations::MIGRATIONS;
 use crate::models::{
     AlbumSearchEntry, AlbumSummary, ArtistGrouping, ArtistSummary, CoverArt, FolderSummary,
-    GenreSort, GenreSummary, IntegrityReport, LocalFolder, NewPlay, NewTrack, PlayTally,
+    IntegrityReport, LocalFolder, NewPlay, NewTrack, PlayTally,
     PlaylistSummary, RecentPlay, ScanTrack, SourceSummary, StoredLyrics, Track,
     TrackListing, ListeningStats, StatEntry,
 };
@@ -40,6 +40,23 @@ const PLAYLIST_ENTRY_COLUMNS: &str = "m.id, COALESCE(t.path, b.source_key, ''), 
     t.id IS NOT NULL";
 
 const PLACEHOLDER_SOURCE_ID: i64 = 1;
+
+/// The tail every album-grouped display list sorts by, after the album title.
+///
+/// `al.id` is not decoration. Albums merge on the **exact** title
+/// (`upsert_album` matches `title = ?1`), but these lists sort the title
+/// `COLLATE NOCASE`, so "Twin" and "twin" are two rows that compare equal here.
+/// Without the id between them their tracks interleave by (disc, track, title),
+/// and `pawse::library_views::grouped_tracks_view` — which groups *consecutive*
+/// album ids into one album block — renders one album as several identical
+/// headers with its songs split across them. That is a real library, not a
+/// contrived one: a re-rip or a different tagger casing the title is enough.
+///
+/// `t.id` does the same job one level down. Two files in one root are two
+/// tracks by design, so an album can legitimately hold the same (disc, track)
+/// twice, and without a final tiebreaker their order is whatever SQLite feels
+/// like on the day.
+const ALBUM_RUN_TIEBREAK: &str = "al.id, t.disc_number, t.track_number, t.title, t.id";
 
 /// Ranked lists for the listening summary. Each selects
 /// `name, subtitle, plays, seconds`, which is what [`ranked`] maps.
@@ -102,28 +119,13 @@ fn display_ordered_tracks(conn: &Connection, where_clause: &str) -> Result<Vec<T
          LEFT JOIN album_artists aa ON aa.album_id = al.id AND aa.position = 0 \
          LEFT JOIN artists art ON art.id = aa.artist_id \
          {where_clause} \
-         ORDER BY art.sort_name COLLATE NOCASE, COALESCE(al.year, 0), al.title COLLATE NOCASE, t.disc_number, t.track_number, t.title",
+         ORDER BY art.sort_name COLLATE NOCASE, COALESCE(al.year, 0), \
+         al.title COLLATE NOCASE, {ALBUM_RUN_TIEBREAK}",
     );
     let mut stmt = conn.prepare_cached(&sql)?;
     let rows = stmt.query_map([], map_track_row)?;
     rows.collect::<std::result::Result<Vec<_>, _>>()
         .map_err(LibraryError::Database)
-}
-
-fn genre_track_order(sort: GenreSort) -> &'static str {
-    match sort {
-        GenreSort::Artist => {
-            "t.album_id IS NULL, art.id IS NULL, \
-             COALESCE(NULLIF(art.sort_name, ''), art.name) COLLATE NOCASE, art.id, \
-             al.year IS NULL, al.year, al.title COLLATE NOCASE, t.album_id, \
-             t.disc_number, t.track_number, t.title"
-        }
-        GenreSort::Year => {
-            "t.album_id IS NULL, al.year IS NULL, al.year, art.id IS NULL, \
-             COALESCE(NULLIF(art.sort_name, ''), art.name) COLLATE NOCASE, art.id, \
-             al.title COLLATE NOCASE, t.album_id, t.disc_number, t.track_number, t.title"
-        }
-    }
 }
 
 fn artist_membership_sql(grouping: ArtistGrouping) -> &'static str {
@@ -742,13 +744,18 @@ fn folder_like_pattern_with(dir: &str, separator: char) -> String {
         }
         pattern.push(ch);
     }
-    // The separator needs escaping when it is the escape character itself,
-    // which on Windows it is: a bare `\` followed by the wildcard would read as
-    // an escaped `%` and demand a literal percent sign.
-    if separator == '\\' {
-        pattern.push('\\');
+    // A filesystem root already *is* the separator (`/`, `D:\`). Appending
+    // another would demand a path with an empty leading component, so a library
+    // root of `/` matched nothing at all.
+    if !dir.ends_with(separator) {
+        // The separator needs escaping when it is the escape character itself,
+        // which on Windows it is: a bare `\` followed by the wildcard would read
+        // as an escaped `%` and demand a literal percent sign.
+        if separator == '\\' {
+            pattern.push('\\');
+        }
+        pattern.push(separator);
     }
-    pattern.push(separator);
     pattern.push('%');
     pattern
 }
@@ -1501,7 +1508,7 @@ impl LibraryRepository for SqliteLibrary {
         if album_id == crate::NO_METADATA_ALBUM_ID {
             let sql = format!(
                 "SELECT {TRACK_COLUMNS} FROM tracks WHERE album_id IS NULL \
-                 ORDER BY disc_number, track_number, title",
+                 ORDER BY disc_number, track_number, title, id",
             );
             let mut stmt = conn.prepare_cached(&sql)?;
             let rows = stmt.query_map([], map_track_row)?;
@@ -1511,7 +1518,7 @@ impl LibraryRepository for SqliteLibrary {
         }
         let sql = format!(
             "SELECT {TRACK_COLUMNS} FROM tracks WHERE album_id = ?1 \
-             ORDER BY disc_number, track_number, title",
+             ORDER BY disc_number, track_number, title, id",
         );
         let mut stmt = conn.prepare_cached(&sql)?;
         let rows = stmt.query_map([album_id], map_track_row)?;
@@ -2031,7 +2038,7 @@ impl LibraryRepository for SqliteLibrary {
                  SELECT {TRACK_COLUMNS_T} FROM tracks t \
                  LEFT JOIN albums al ON al.id = t.album_id \
                  WHERE NOT EXISTS (SELECT 1 FROM m WHERE m.track_id = t.id) \
-                 ORDER BY COALESCE(al.year, 0), al.title COLLATE NOCASE, t.disc_number, t.track_number, t.title",
+                 ORDER BY COALESCE(al.year, 0), al.title COLLATE NOCASE, {ALBUM_RUN_TIEBREAK}",
             );
             let mut stmt = conn.prepare_cached(&sql)?;
             let rows = stmt.query_map([], map_track_row)?;
@@ -2046,73 +2053,10 @@ impl LibraryRepository for SqliteLibrary {
              JOIN u ON u.track_id = t.id \
              LEFT JOIN albums al ON al.id = t.album_id \
              WHERE u.artist_id = ?1 \
-             ORDER BY COALESCE(al.year, 0), al.title COLLATE NOCASE, t.disc_number, t.track_number, t.title",
+             ORDER BY COALESCE(al.year, 0), al.title COLLATE NOCASE, {ALBUM_RUN_TIEBREAK}",
         );
         let mut stmt = conn.prepare_cached(&sql)?;
         let rows = stmt.query_map([artist_id], map_track_row)?;
-        rows.collect::<std::result::Result<Vec<_>, _>>()
-            .map_err(LibraryError::Database)
-    }
-
-    fn genres(&self) -> Result<Vec<GenreSummary>> {
-        let conn = self.conn.lock().unwrap();
-        let mut stmt = conn.prepare_cached(
-            "SELECT g.key, g.name, COUNT(*) FROM genres g \
-             JOIN track_genres tg ON tg.genre_id = g.id \
-             GROUP BY g.id \
-             ORDER BY g.key",
-        )?;
-        let rows = stmt.query_map([], |row| {
-            Ok(GenreSummary {
-                key: row.get(0)?,
-                name: row.get(1)?,
-                track_count: row.get(2)?,
-            })
-        })?;
-        rows.collect::<std::result::Result<Vec<_>, _>>()
-            .map_err(LibraryError::Database)
-    }
-
-    fn genre_album_covers(&self) -> Result<HashMap<String, Vec<i64>>> {
-        let conn = self.conn.lock().unwrap();
-        let mut stmt = conn.prepare_cached(
-            "SELECT g.key, al.cover_art_id FROM track_genres tg \
-             JOIN genres g ON g.id = tg.genre_id \
-             JOIN tracks t ON t.id = tg.track_id \
-             JOIN albums al ON al.id = t.album_id \
-             WHERE al.cover_art_id IS NOT NULL \
-             GROUP BY g.id, al.id \
-             ORDER BY g.id, COUNT(*) DESC, al.title COLLATE NOCASE, al.id",
-        )?;
-        let rows = stmt.query_map([], |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
-        })?;
-        let mut map: HashMap<String, Vec<i64>> = HashMap::new();
-        for row in rows {
-            let (key, cover_art_id) = row.map_err(LibraryError::Database)?;
-            let covers = map.entry(key).or_default();
-            if covers.len() < 3 && !covers.contains(&cover_art_id) {
-                covers.push(cover_art_id);
-            }
-        }
-        Ok(map)
-    }
-
-    fn tracks_by_genre(&self, key: &str, sort: GenreSort) -> Result<Vec<Track>> {
-        let conn = self.conn.lock().unwrap();
-        let order = genre_track_order(sort);
-        let sql = format!(
-            "SELECT {TRACK_COLUMNS_T} FROM genres g \
-             JOIN track_genres tg ON tg.genre_id = g.id \
-             JOIN tracks t ON t.id = tg.track_id \
-             LEFT JOIN albums al ON al.id = t.album_id \
-             LEFT JOIN album_artists aa ON aa.album_id = al.id AND aa.position = 0 \
-             LEFT JOIN artists art ON art.id = aa.artist_id \
-             WHERE g.key = ?1 \
-             ORDER BY {order}",
-        );
-        let mut stmt = conn.prepare_cached(&sql)?;
-        let rows = stmt.query_map([key], map_track_row)?;
         rows.collect::<std::result::Result<Vec<_>, _>>()
             .map_err(LibraryError::Database)
     }
@@ -2185,18 +2129,26 @@ impl LibraryRepository for SqliteLibrary {
             entry.1.insert(album_id);
         }
 
-        Ok(folders
-            .into_iter()
-            .map(|(name, (track_count, albums))| FolderSummary {
-                // The host separator, because the track paths these come from
-                // are host-native; joining with a literal `/` built folder
-                // paths that no stored path could ever match on Windows.
-                path: format!("{base}{}{name}", std::path::MAIN_SEPARATOR),
-                name,
-                track_count,
-                album_count: albums.len() as i64,
-            })
-            .collect())
+        Ok({
+            let mut summaries: Vec<FolderSummary> = folders
+                .into_iter()
+                .map(|(name, (track_count, albums))| FolderSummary {
+                    // The host separator, because the track paths these come from
+                    // are host-native; joining with a literal `/` built folder
+                    // paths that no stored path could ever match on Windows.
+                    path: format!("{base}{}{name}", std::path::MAIN_SEPARATOR),
+                    name,
+                    track_count,
+                    // `None` is "tracks with no album", not an album. Counting it
+                    // claimed one album for a folder of loose files.
+                    album_count: albums.iter().filter(|id| id.is_some()).count() as i64,
+                })
+                .collect();
+            // `folder_roots` orders case-insensitively, and a level that ordered
+            // differently put "apple" after "Zebra" on every level below the top.
+            summaries.sort_by_key(|s| (s.name.to_lowercase(), s.name.clone()));
+            summaries
+        })
     }
 
     fn tracks_in_folder(&self, path: &str) -> Result<Vec<Track>> {
@@ -2209,12 +2161,63 @@ impl LibraryRepository for SqliteLibrary {
              LEFT JOIN artists art ON art.id = aa.artist_id \
              WHERE t.path LIKE ?1 ESCAPE '\\' \
              ORDER BY art.sort_name COLLATE NOCASE, COALESCE(al.year, 0), \
-             al.title COLLATE NOCASE, t.disc_number, t.track_number, t.title",
+             al.title COLLATE NOCASE, {ALBUM_RUN_TIEBREAK}",
         );
         let mut stmt = conn.prepare_cached(&sql)?;
         let rows = stmt.query_map([pattern], map_track_row)?;
         rows.collect::<std::result::Result<Vec<_>, _>>()
             .map_err(LibraryError::Database)
+    }
+
+    fn tracks_directly_in_folder(&self, path: &str) -> Result<Vec<Track>> {
+        let base = clean_dir(path);
+        Ok(self
+            .tracks_in_folder(&base)?
+            .into_iter()
+            // `tracks_in_folder` already returns the display order, so this only
+            // drops the rows that belong to a subdirectory.
+            .filter(|track| {
+                std::path::Path::new(&track.path).parent() == Some(std::path::Path::new(&base))
+            })
+            .collect())
+    }
+
+    fn direct_track_count(&self, path: &str) -> Result<i64> {
+        let conn = self.conn.lock().unwrap();
+        let base = clean_dir(path);
+        let mut stmt = conn
+            .prepare_cached("SELECT path FROM tracks WHERE path LIKE ?1 ESCAPE '\\'")?;
+        let rows = stmt.query_map([folder_like_pattern(&base)], |row| row.get::<_, String>(0))?;
+        let mut count = 0i64;
+        for row in rows {
+            let track_path = row.map_err(LibraryError::Database)?;
+            // Directly in the folder, not one of its subdirectories: the LIKE
+            // already restricts us to the subtree, so this is the whole test.
+            if std::path::Path::new(&track_path).parent() == Some(std::path::Path::new(&base)) {
+                count += 1;
+            }
+        }
+        Ok(count)
+    }
+
+    fn replaygain(&self, track_id: i64) -> Result<Option<crate::ReplayGain>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare_cached(
+            "SELECT track_gain, track_peak, album_gain, album_peak \
+             FROM track_gain WHERE track_id = ?1",
+        )?;
+        let mut rows = stmt.query_map([track_id], |row| {
+            Ok(crate::ReplayGain {
+                track_gain: row.get::<_, Option<f64>>(0)?.map(|v| v as f32),
+                track_peak: row.get::<_, Option<f64>>(1)?.map(|v| v as f32),
+                album_gain: row.get::<_, Option<f64>>(2)?.map(|v| v as f32),
+                album_peak: row.get::<_, Option<f64>>(3)?.map(|v| v as f32),
+            })
+        })?;
+        match rows.next() {
+            Some(row) => Ok(Some(row.map_err(LibraryError::Database)?)),
+            None => Ok(None),
+        }
     }
 
     fn track(&self, id: i64) -> Result<Option<Track>> {
@@ -2226,6 +2229,34 @@ impl LibraryRepository for SqliteLibrary {
             Some(row) => Ok(Some(row.map_err(LibraryError::Database)?)),
             None => Ok(None),
         }
+    }
+
+    fn tracks_by_ids(&self, ids: &[i64]) -> Result<Vec<Track>> {
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        // Dedupe and chunk: SQLite refuses a statement with more bound
+        // parameters than SQLITE_MAX_VARIABLE_NUMBER, and a restored queue of a
+        // large library is far past that.
+        let mut ids: Vec<i64> = ids.to_vec();
+        ids.sort_unstable();
+        ids.dedup();
+        let conn = self.conn.lock().unwrap();
+        let mut out = Vec::new();
+        for chunk in ids.chunks(512) {
+            let placeholders = std::iter::repeat_n("?", chunk.len())
+                .collect::<Vec<_>>()
+                .join(",");
+            let sql = format!("SELECT {TRACK_COLUMNS} FROM tracks WHERE id IN ({placeholders})");
+            let mut stmt = conn.prepare(&sql)?;
+            let params: Vec<&dyn rusqlite::ToSql> =
+                chunk.iter().map(|id| id as &dyn rusqlite::ToSql).collect();
+            let rows = stmt.query_map(params.as_slice(), map_track_row)?;
+            for row in rows {
+                out.push(row.map_err(LibraryError::Database)?);
+            }
+        }
+        Ok(out)
     }
 
     fn all_tracks(&self) -> Result<Vec<Track>> {
@@ -3473,6 +3504,21 @@ impl ScanSession {
         }
         let track_id = item_id;
 
+        if !track.replaygain.is_empty() {
+            self.conn.execute(
+                "INSERT OR REPLACE INTO track_gain \
+                 (track_id, track_gain, track_peak, album_gain, album_peak) \
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                rusqlite::params![
+                    track_id,
+                    track.replaygain.track_gain.map(f64::from),
+                    track.replaygain.track_peak.map(f64::from),
+                    track.replaygain.album_gain.map(f64::from),
+                    track.replaygain.album_peak.map(f64::from),
+                ],
+            )?;
+        }
+
         for (artist_id, position) in &artist_ids {
             self.conn.execute(
                 "INSERT INTO track_artists (track_id, artist_id, role, position) VALUES (?1, ?2, 'main', ?3)",
@@ -3839,6 +3885,112 @@ mod tests {
         assert_eq!(nightwish[1].path, "/music/Rock/Nightwish");
     }
 
+    /// Every level orders by name ignoring case, because the roots list does.
+    /// Raw byte order put "Zebra" above "apple" on every level below the top.
+    #[test]
+    fn child_folders_sort_ignoring_case() {
+        let lib = open_test_lib();
+        for path in [
+            "/music/Zebra/a.flac",
+            "/music/apple/b.flac",
+            "/music/Mango/c.flac",
+        ] {
+            add_track(&lib, path);
+        }
+
+        let names: Vec<String> = lib
+            .child_folders("/music")
+            .unwrap()
+            .into_iter()
+            .map(|f| f.name)
+            .collect();
+
+        assert_eq!(
+            names,
+            vec!["apple".to_string(), "Mango".to_string(), "Zebra".to_string()]
+        );
+    }
+
+    /// "No album" is not an album. Counting the `NULL` group claimed one album
+    /// for a folder that holds only loose, untagged files.
+    #[test]
+    fn child_folders_do_not_count_untagged_tracks_as_an_album() {
+        let lib = open_test_lib();
+        add_track(&lib, "/music/Loose/a.flac");
+        add_track(&lib, "/music/Loose/b.flac");
+        let album = lib.upsert_album("Real", Some(2020), None).unwrap();
+        lib.upsert_track(
+            &NewTrack {
+                path: "/music/Loose/c.flac".into(),
+                title: None,
+                ..Default::default()
+            },
+            Some(album),
+            &[],
+        )
+        .unwrap();
+
+        let loose = lib
+            .child_folders("/music")
+            .unwrap()
+            .into_iter()
+            .find(|f| f.name == "Loose")
+            .unwrap();
+
+        assert_eq!(loose.track_count, 3);
+        assert_eq!(loose.album_count, 1);
+    }
+
+    /// The "tracks in this folder" row counts the files that sit directly in the
+    /// folder, not the whole subtree — otherwise it would duplicate the total
+    /// already shown on the folder's own row.
+    #[test]
+    fn direct_track_count_ignores_subdirectories() {
+        let lib = open_test_lib();
+        for path in [
+            "/music/Rock/loose.flac",
+            "/music/Rock/also.flac",
+            "/music/Rock/Nightwish/a.flac",
+            "/music/Rock/Nightwish/b.flac",
+            "/music/Jazz/d.flac",
+        ] {
+            add_track(&lib, path);
+        }
+
+        assert_eq!(lib.direct_track_count("/music/Rock").unwrap(), 2);
+        assert_eq!(lib.direct_track_count("/music/Rock/Nightwish").unwrap(), 2);
+        assert_eq!(lib.direct_track_count("/music").unwrap(), 0);
+        assert_eq!(lib.direct_track_count("/music/Nothing").unwrap(), 0);
+    }
+
+    /// The row this backs must show the folder's own files, not the subtree —
+    /// the subtree is already reachable through the subdirectory rows.
+    #[test]
+    fn tracks_directly_in_folder_skips_subdirectories() {
+        let lib = open_test_lib();
+        for path in [
+            "/music/Rock/b.flac",
+            "/music/Rock/a.flac",
+            "/music/Rock/Nightwish/deep.flac",
+        ] {
+            add_track(&lib, path);
+        }
+
+        let direct: Vec<String> = lib
+            .tracks_directly_in_folder("/music/Rock")
+            .unwrap()
+            .into_iter()
+            .map(|t| t.path)
+            .collect();
+
+        assert_eq!(
+            direct,
+            vec!["/music/Rock/a.flac".to_string(), "/music/Rock/b.flac".to_string()]
+        );
+        // The subtree query is untouched and still sees everything.
+        assert_eq!(lib.tracks_in_folder("/music/Rock").unwrap().len(), 3);
+    }
+
     #[test]
     fn a_sibling_with_a_shared_prefix_is_not_a_child() {
         let lib = open_test_lib();
@@ -3994,5 +4146,25 @@ mod tests {
             folder_like_pattern_with("/100%_pure", '/'),
             "/100\\%\\_pure/%"
         );
+    }
+
+    /// A root already ends in its separator, so the pattern must not add a
+    /// second one: `//%` demands a path with an empty leading component and
+    /// matches nothing at all, which made a library root of `/` show zero
+    /// tracks.
+    #[test]
+    fn folder_like_pattern_does_not_double_a_root_separator() {
+        assert_eq!(folder_like_pattern_with("/", '/'), "/%");
+        assert_eq!(folder_like_pattern_with("D:\\", '\\'), "D:\\\\%");
+
+        // And they still match what they are supposed to.
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.execute_batch("CREATE TABLE tracks (path TEXT NOT NULL)")
+            .unwrap();
+        for path in ["/music/a.flac", "/other/b.flac"] {
+            conn.execute("INSERT INTO tracks VALUES (?1)", [path])
+                .unwrap();
+        }
+        assert_eq!(paths_matching(&conn, "/", '/').len(), 2);
     }
 }

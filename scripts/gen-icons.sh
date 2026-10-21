@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Generate the application icons from assets/pulse.svg.
+# Generate the application icons from web/public/pulse.svg.
 #
 # Outputs into crates/ui_resources/assets/app-icon/:
 #   32x32.png 128x128.png 128x128@2x.png icon.png

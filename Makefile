@@ -1,7 +1,10 @@
-FFMPEG_VERSION ?= 7.1
-FFMPEG_URL ?= https://evermeet.cx/ffmpeg/ffmpeg-$(FFMPEG_VERSION).zip
-BIN_DIR = bin
-FFMPEG = $(BIN_DIR)/ffmpeg
+# Fixtures are generated with the host's ffmpeg. Pulse is a Linux-only project,
+# so there is nothing to download: every distro package that ships ffmpeg ships
+# these encoders with it.
+#
+# Override the binary if it is not on PATH:
+#   make generate FFMPEG=/usr/local/bin/ffmpeg
+FFMPEG ?= ffmpeg
 FIXTURES_DIR = fixtures
 
 FIXTURES = \
@@ -25,20 +28,25 @@ FIXTURES = \
 	$(FIXTURES_DIR)/late_start_opus.opus \
 	$(FIXTURES_DIR)/tagged_m4a.m4a
 
-.PHONY: all generate clean bin-deps
+.PHONY: all generate clean check-ffmpeg
 
 all: generate
 
-bin-deps: $(FFMPEG)
+# Fail with something readable instead of a wall of "command not found" from
+# every rule. libopus is called out because the Opus fixtures need it and a
+# minimal ffmpeg build can lack it.
+check-ffmpeg:
+	@command -v "$(FFMPEG)" >/dev/null 2>&1 || { \
+		echo "error: ffmpeg not found (looked for '$(FFMPEG)')." >&2; \
+		echo "       Install ffmpeg, or run: make generate FFMPEG=/path/to/ffmpeg" >&2; \
+		exit 1; \
+	}
+	@$(FFMPEG) -hide_banner -encoders 2>/dev/null | grep -q libopus || { \
+		echo "error: this ffmpeg has no libopus encoder; the Opus fixtures need it." >&2; \
+		exit 1; \
+	}
 
-$(FFMPEG):
-	@mkdir -p $(BIN_DIR)
-	curl -L -o $(BIN_DIR)/ffmpeg.zip "$(FFMPEG_URL)"
-	unzip -o $(BIN_DIR)/ffmpeg.zip -d $(BIN_DIR)
-	rm $(BIN_DIR)/ffmpeg.zip
-	chmod +x $(FFMPEG)
-
-generate: bin-deps $(FIXTURES)
+generate: check-ffmpeg $(FIXTURES)
 
 $(FIXTURES_DIR):
 	@mkdir -p $(FIXTURES_DIR)
@@ -201,7 +209,7 @@ clean:
 #   - ASAN and TSAN are mutually exclusive (separate builds, separate processes).
 #   - Sanitizer builds rebuild std (-Zbuild-std), so each is slow on first run.
 #   - Nightly-based targets (careful/asan/tsan/miri) exclude the gpui crates
-#     (pawse, ui_components, audio_engine, ui_resources) because gpui pulls in
+#     (pulse, ui_components, audio_engine, ui_resources) because gpui pulls in
 #     pathfinder_simd, which enables unstable features on nightly and fails to
 #     compile. The audio/library crates listed in SAN_CRATES are where unsafe and
 #     concurrency live, so that's what we actually want to sanitize.

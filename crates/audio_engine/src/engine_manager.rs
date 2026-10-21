@@ -67,6 +67,10 @@ impl EngineManager {
         self.audio_engine.seek(position);
     }
 
+    pub fn set_track_gain(&self, gain: f32) {
+        self.audio_engine.set_track_gain(gain);
+    }
+
     pub fn stop(&self) {
         self.audio_engine.stop();
     }

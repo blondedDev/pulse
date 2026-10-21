@@ -1,7 +1,7 @@
 # music_indexer
 
 Turns a set of music folders into a stream of `ScanEvent`s (cover thumbnails,
-prepared tracks, progress, errors) for the DB writer in `pawse::library_service`.
+prepared tracks, progress, errors) for the DB writer in `pulse::library_service`.
 It owns directory walking, metadata/tag reading (`lofty`), CUE-sheet expansion,
 external cover-art discovery, and change-detection fingerprinting. It does **not**
 touch SQLite — it only emits events; the caller persists them.

@@ -9,8 +9,8 @@ members = [
     "crates/music_indexer",
     "crates/media_integration",
     "crates/discord",
-    "crates/pawse",
-    "crates/pawse_remote",
+    "crates/pulse",
+    "crates/pulse_remote",
     "crates/ui_components",
     "crates/ui_resources",
     "crates/cue_parser",
@@ -21,14 +21,13 @@ members = [
     "crates/cover_search"
 ]
 
-default-members = ["crates/pawse"]
+default-members = ["crates/pulse"]
 
 
 [workspace.package]
 publish = false
-# Shown in Settings → General → Version. Pulse is a private, single-user build;
-# it is not released anywhere.
-version = "4.0.0"
+# Shown in Settings → General → Version.
+version = "5.0.0"
 edition = "2024"
 
 [workspace.dependencies]

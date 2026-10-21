@@ -63,6 +63,9 @@ pub struct CpalOutputStream {
     inner: RwLock<CpalOutputStreamInner>,
     buffer: Arc<AudioRingBuffer>,
     volume: Arc<AtomicF32>,
+    /// ReplayGain for the track being played, applied in the callback next to
+    /// the volume. Kept separate so neither overwrites the other.
+    track_gain: Arc<AtomicF32>,
     fade: Arc<FadeState>,
     silenced: Arc<AtomicBool>,
     device_lost: Arc<AtomicBool>,
@@ -189,6 +192,7 @@ fn fill_f32(
     silenced: &AtomicBool,
     buffer: &AudioRingBuffer,
     volume: &AtomicF32,
+    track_gain: &AtomicF32,
     channels: usize,
     data: &mut [f32],
 ) {
@@ -202,7 +206,9 @@ fn fill_f32(
     }
 
     let samples_read = buffer.pop_slice(data);
-    let vol = volume.load(Ordering::Relaxed);
+    // One multiply for both gains: `apply_fade_gain` keeps its unity fast path,
+    // so ReplayGain off + volume at 100% is still bit-identical.
+    let vol = volume.load(Ordering::Relaxed) * track_gain.load(Ordering::Relaxed);
     apply_fade_gain(fade, vol, channels, &mut data[..samples_read]);
     for sample in &mut data[samples_read..] {
         *sample = 0.0;
@@ -234,6 +240,10 @@ struct RenderState {
     volume: Arc<AtomicF32>,
     fade: Arc<FadeState>,
     silenced: Arc<AtomicBool>,
+    /// ReplayGain for the track being played. Separate from `volume` so a
+    /// user turning the volume down never overwrites it, and so the user's
+    /// level survives a track change.
+    track_gain: Arc<AtomicF32>,
 }
 
 impl RenderState {
@@ -243,6 +253,7 @@ impl RenderState {
             &self.silenced,
             &self.buffer,
             &self.volume,
+            &self.track_gain,
             channels,
             data,
         );
@@ -285,10 +296,8 @@ where
     )
 }
 
-#[cfg(target_os = "linux")]
 const TARGET_PERIOD_MS: u32 = 20;
 
-#[cfg(target_os = "linux")]
 fn preferred_period(device: &cpal::Device, config: &OutputConfig) -> Option<u32> {
     use cpal::traits::DeviceTrait;
 
@@ -299,23 +308,30 @@ fn preferred_period(device: &cpal::Device, config: &OutputConfig) -> Option<u32>
     }
 }
 
-#[cfg(not(target_os = "linux"))]
-fn preferred_period(_device: &cpal::Device, _config: &OutputConfig) -> Option<u32> {
-    None
-}
-
 impl CpalOutputStream {
+    /// ReplayGain for the current track, as a linear multiplier.
+    ///
+    /// Not part of `AudioOutput`: it only exists on the shared (software) path.
+    /// Native-sample-rate mode is untouched by design — it is the output that
+    /// promises the file's samples reach the device unmodified.
+    pub fn set_track_gain(&self, gain: f32) {
+        self.track_gain
+            .store(gain.clamp(0.0, 4.0), Ordering::Relaxed);
+    }
+
     pub fn new(
         buffer: Arc<AudioRingBuffer>,
         output_config: OutputConfig,
         device: SelectedOutputDevice,
     ) -> Result<Self, AudioError> {
         let volume = Arc::new(AtomicF32::new(1.0));
+        let track_gain = Arc::new(AtomicF32::new(1.0));
         let fade = Arc::new(FadeState::new());
         let silenced = Arc::new(AtomicBool::new(true));
         let render = RenderState {
             buffer: buffer.clone(),
             volume: volume.clone(),
+            track_gain: track_gain.clone(),
             fade: fade.clone(),
             silenced: silenced.clone(),
         };
@@ -406,6 +422,7 @@ impl CpalOutputStream {
             buffer: buffer.clone(),
             config: output_config,
             volume,
+            track_gain,
             fade,
             silenced,
             device_lost,
@@ -696,14 +713,15 @@ mod tests {
         let buffer = AudioRingBuffer::new(64);
         buffer.push_slice(&[0.5; 8]);
         let volume = AtomicF32::new(1.0);
+        let track_gain = AtomicF32::new(1.0);
         let mut data = [1.0f32; 4];
 
-        fill_f32(&fade, &silenced, &buffer, &volume, 2, &mut data);
+        fill_f32(&fade, &silenced, &buffer, &volume, &track_gain, 2, &mut data);
         assert_eq!(data, [0.0; 4]);
         assert_eq!(buffer.len(), 8);
 
         silenced.store(false, Ordering::SeqCst);
-        fill_f32(&fade, &silenced, &buffer, &volume, 2, &mut data);
+        fill_f32(&fade, &silenced, &buffer, &volume, &track_gain, 2, &mut data);
         assert_eq!(data, [0.5; 4]);
         assert_eq!(buffer.len(), 4);
     }

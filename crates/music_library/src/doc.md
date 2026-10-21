@@ -3,7 +3,7 @@
 The SQLite-backed library: the catalog the screens browse, the user data that
 hangs off it (playlists, fetched lyrics, listening history), and the identity
 layer that keeps the two apart. Only this crate
-touches the database; `pawse::library_service` drives scans through
+touches the database; `pulse::library_service` drives scans through
 [`ScanWrite`] and everything else goes through [`LibraryRepository`].
 
 ## Files
@@ -48,10 +48,11 @@ the files. A scan is still `clear()` + refill for this part, and that is fine:
 `clear()` touches nothing else.
 
 **Identity and user data** — `media_items`, `media_bindings`, `sources`,
-`playlist_tracks`, `lyrics` from the network, `plays` and `play_deliveries`.
-None of it is derivable, so no scan deletes it. `loves` and `love_deliveries`
-are still in the schema but nothing writes them any more — see "Legacy rows
-kept in the schema".
+`playlist_tracks`, `lyrics` from the network, and `plays`. None of it is
+derivable, so no scan deletes it. The two tables that used to sit here are gone:
+`loves`/`love_deliveries` went with the Liked feature in migration 12 and
+`play_deliveries` with scrobbling in migration 13 — see "Legacy rows kept in the
+schema" for why the earlier steps still create them.
 
 The link between them is the id. `media_items.id` is the durable identity of a
 track; `tracks.id` borrows it (`tracks.id REFERENCES media_items(id)`), so a
@@ -270,8 +271,8 @@ leftovers will break an upgrade:
   too. `Track::local_file` / `own_file` reject it privately
   (`REMOTE_LOCATOR_PREFIX` in `models.rs`), so a server-track row from an old
   database reports "no local file" rather than being handed to the tag editor or
-  the decoder. The crate and package names (`pawse`, `pawse_remote`,
-  `crates/pawse`) are unchanged as well.
+  the decoder. The crate and package names (`pulse`, `pulse_remote`,
+  `crates/pulse`) are unchanged as well.
 
 ## What a scan does to identity
 
@@ -306,9 +307,10 @@ clear, and every writer allocates through the same function — the scan and the
 tag editor's `upsert_album` / `get_or_insert_artist` — so a tag edit that lands
 between two scan batches can neither reuse a dead id nor take one the scan is
 about to hand back. Genres are not covered: their ids are
-reissued on every scan, so the one screen that holds a genre (the app's genre
-page) holds its `key` — the Rust-lowercased name, unique and stable — and every
-genre query takes the key.
+reissued on every scan, so nothing outside the database holds one. A genre is
+named by its `key` — the Rust-lowercased name, unique and stable — and every
+genre query and tag write takes that, never an id. (The Genres tab was removed;
+genre tags are still read, written and shown on the album screens.)
 
 Artists are keyed by the lowercased name (`artist_key`): `Glass the Harbor`
 and `Glass The Harbor`, or `NOVA` and `Nova`, are one artist, shown under the
@@ -321,20 +323,16 @@ Albums still merge on the exact title.
 
 - **Nothing user-side is lost to a scan.** `clear()` never touches user tables,
   and the `media_items_guard_user_data` trigger makes it structural: deleting an
-  item referenced by `playlist_tracks`, network lyrics, `plays` or `loves`
-  aborts. `SWEEP_UNREFERENCED_ITEMS` mirrors the trigger's conditions exactly;
-  if the two ever diverge the sweep aborts the scan's last transaction instead of
-  deleting user data.
+  item referenced by `playlist_tracks`, network lyrics or `plays` aborts.
+  `SWEEP_UNREFERENCED_ITEMS` mirrors the trigger's conditions exactly; if the two
+  ever diverge the sweep aborts the scan's last transaction instead of deleting
+  user data.
 - **Ids are stable across rescans and never reused.** `tracks.id` is borrowed,
   not minted, and `media_items.id` is `AUTOINCREMENT`: once the sweep deletes an
   item its number is retired. Without that SQLite hands out `max(rowid) + 1`, so
   sweeping the newest item would give its id to the next new track, and anything
   still holding the old id (the web remote before its refetch, a persisted queue)
   would show a different song.
-- **A pre-3.0 love still guards its item.** Nothing writes `loves` any more, but
-  the trigger and the sweep both name it, so an item a like once pointed at
-  survives a scan like any other piece of user data. See "Legacy rows kept in
-  the schema".
 - **Lyrics keep one row per source** (`PRIMARY KEY (track_id, source)`, migration
   10): a `.lrc` sidecar, the embedded tag and an LRCLIB result live side by side, so
   a scan never overwrites fetched words and the user can switch between them.
@@ -382,8 +380,11 @@ the main connection:
   Plays of tracks that left the catalog are only visible through
   `play_tallies`.
 
-The Tools screen that consumed these is gone, so nothing in the app calls them
-today; they stay on the trait and are exercised by the crate's tests.
+`track_listings` has one caller: the Ctrl+K command palette, which builds its
+whole searchable track set from it in a single query (`build_candidates`). The
+other two have none. The Tools screen that used to read all three is gone, so
+`play_tallies` and `recent_plays` live on the trait purely as tested history
+queries — keep them only while nothing else wants them.
 
 ## Migrations
 

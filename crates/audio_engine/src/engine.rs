@@ -114,6 +114,11 @@ impl AudioEngine {
         self.send_command(Command::Play { fade_in: true })
     }
 
+    /// ReplayGain for the track that is about to play, as a linear multiplier.
+    pub fn set_track_gain(&self, gain: f32) {
+        self.send_command(Command::SetTrackGain(gain))
+    }
+
     pub fn play_gapless(&self) {
         self.send_command(Command::Play { fade_in: false })
     }
@@ -463,6 +468,7 @@ impl AudioEngineLoop {
             Command::Play { fade_in } => self.handle_play(fade_in),
             Command::Pause => self.handle_pause(),
             Command::Seek(position) => self.handle_seek(position),
+            Command::SetTrackGain(gain) => self.output.set_track_gain(gain),
             Command::SetLocalTrack {
                 path,
                 start_offset,

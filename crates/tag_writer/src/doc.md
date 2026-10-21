@@ -5,7 +5,7 @@ read side. `music_indexer` is read-only by contract and `music_library` is
 DB-only, so writing into the user's own files lives here — isolated, GPUI-free,
 with its own round-trip tests. It knows nothing about SQLite or the UI.
 
-`pawse::library_service` is the only consumer.
+`pulse::library_service` is the only consumer.
 
 ## Files
 

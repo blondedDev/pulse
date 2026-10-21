@@ -35,6 +35,36 @@ pub struct Strings {
     pub queue: SharedString,
     pub remove_from_queue: SharedString,
     pub queue_is_empty: SharedString,
+    pub playing_from_t: SharedString,
+    pub selection_count_t: SharedString,
+    pub clear_selection: SharedString,
+
+    // --- Duplicates ---
+    pub duplicates_group: SharedString,
+    pub duplicates_priority: SharedString,
+    pub duplicates_desc: SharedString,
+    pub duplicates_empty: SharedString,
+    pub duplicates_add_folder: SharedString,
+    pub duplicates_seed: SharedString,
+    pub duplicates_find: SharedString,
+    pub duplicates_found: SharedString,
+    pub duplicates_none: SharedString,
+    pub duplicates_confirm_title: SharedString,
+    pub duplicates_confirm_body: SharedString,
+    pub duplicates_move_to_trash: SharedString,
+    pub duplicates_moved_t: SharedString,
+    pub duplicates_failed_t: SharedString,
+    pub duplicates_more_t: SharedString,
+    pub duplicates_up: SharedString,
+    pub duplicates_down: SharedString,
+    pub playback_group: SharedString,
+    pub replaygain: SharedString,
+    pub replaygain_desc: SharedString,
+    pub replaygain_off: SharedString,
+    pub replaygain_track: SharedString,
+    pub replaygain_album: SharedString,
+    pub replaygain_clip: SharedString,
+    pub replaygain_clip_desc: SharedString,
     pub clear_queue: SharedString,
     pub save_queue_to_playlist: SharedString,
 
@@ -53,7 +83,6 @@ pub struct Strings {
     pub search_placeholder: SharedString,
     pub tab_albums: SharedString,
     pub tab_artists: SharedString,
-    pub tab_genres: SharedString,
     pub tab_folders: SharedString,
     pub tab_playlists: SharedString,
     pub cover_mode: SharedString,
@@ -87,12 +116,10 @@ pub struct Strings {
     pub no_tracks_for_album: SharedString,
     pub no_tracks_match: SharedString,
     pub no_tracks_for_artist: SharedString,
-    pub no_genres_found: SharedString,
-    pub no_genres_match: SharedString,
-    pub no_tracks_for_genre: SharedString,
     pub no_folders_found: SharedString,
     pub no_folders_match: SharedString,
     pub no_tracks_in_folder: SharedString,
+    pub tracks_in_this_folder: SharedString,
     pub playlist_is_empty: SharedString,
 
     // --- Playlists ---
@@ -120,8 +147,6 @@ pub struct Strings {
     pub settings_library: SharedString,
     pub dynamic_theme: SharedString,
     pub dynamic_theme_desc: SharedString,
-    pub exclusive_mode_button: SharedString,
-    pub exclusive_mode_button_desc: SharedString,
     pub native_rate_button: SharedString,
     pub native_rate_button_desc: SharedString,
     pub device_picker_button: SharedString,
@@ -150,10 +175,42 @@ pub struct Strings {
     pub blur_interface_opacity: SharedString,
     pub blur_interface_opacity_desc: SharedString,
     pub playlists_desc: SharedString,
-    pub genres_desc: SharedString,
     pub folders_desc: SharedString,
-    pub genre_sort_artist: SharedString,
-    pub genre_sort_year: SharedString,
+    pub albums_desc: SharedString,
+    pub artists_desc: SharedString,
+    pub tabs_all_tracks_note: SharedString,
+
+    // --- Advanced / maintenance ---
+    pub settings_advanced: SharedString,
+    pub advanced_files: SharedString,
+    pub advanced_maintenance: SharedString,
+    pub advanced_danger: SharedString,
+    pub advanced_data_dir: SharedString,
+    pub advanced_config_dir: SharedString,
+    pub advanced_logs_dir: SharedString,
+    pub advanced_clear_covers: SharedString,
+    pub advanced_clear_covers_desc: SharedString,
+    pub advanced_clear_covers_done_t: SharedString,
+    pub advanced_rescan: SharedString,
+    pub advanced_rescan_desc: SharedString,
+    pub advanced_rescan_started: SharedString,
+    pub advanced_reset_window: SharedString,
+    pub advanced_reset_window_desc: SharedString,
+    pub advanced_reset_window_done: SharedString,
+    pub advanced_vacuum: SharedString,
+    pub advanced_vacuum_desc: SharedString,
+    pub advanced_vacuum_done: SharedString,
+    pub advanced_reset_all: SharedString,
+    pub advanced_reset_all_desc: SharedString,
+    pub advanced_reset_all_confirm: SharedString,
+    pub advanced_reset_all_body: SharedString,
+    pub advanced_reset_all_done: SharedString,
+    pub not_available: SharedString,
+    pub library_open_failed_title: SharedString,
+    pub library_open_failed_body: SharedString,
+    pub library_open_failed_hint: SharedString,
+    pub library_open_failed_database: SharedString,
+    pub library_open_failed_backups: SharedString,
     pub track_duration: SharedString,
     pub track_duration_desc: SharedString,
     pub action_buttons: SharedString,
@@ -167,7 +224,6 @@ pub struct Strings {
     pub cover_controls_desc: SharedString,
     pub queue_deduplication: SharedString,
     pub queue_deduplication_desc: SharedString,
-    pub settings_albums_view: SharedString,
 
     pub window_group: SharedString,
     pub startup_tab: SharedString,
@@ -193,7 +249,6 @@ pub struct Strings {
     pub albums_artist_inline: SharedString,
     pub albums_artist_column: SharedString,
     pub albums_artist_hidden: SharedString,
-    pub settings_artists_view: SharedString,
     pub artists_group_by_tag: SharedString,
     pub no_folders_added: SharedString,
     pub reveal_folder: SharedString,
@@ -203,15 +258,11 @@ pub struct Strings {
 
     // --- Audio settings ---
     pub audio_device: SharedString,
-    pub exclusive_mode_title: SharedString,
     pub bit_perfect_playback: SharedString,
     pub not_bit_perfect: SharedString,
-    pub bp_not_exclusive: SharedString,
     pub bp_system_muted: SharedString,
     pub bp_no_source: SharedString,
     pub select_audio_device: SharedString,
-    pub exclusive_click_disable: SharedString,
-    pub shared_click_enable: SharedString,
     pub native_rate_title: SharedString,
     pub native_rate_click_disable: SharedString,
     pub native_rate_click_enable: SharedString,
@@ -229,11 +280,6 @@ pub struct Strings {
     // --- App menu ---
     pub quit_pulse: SharedString,
     pub rescan_library: SharedString,
-    pub hide_pulse: SharedString,
-    pub hide_others: SharedString,
-    pub show_all: SharedString,
-    pub minimize: SharedString,
-    pub zoom: SharedString,
     pub version: SharedString,
     pub up_to_date: SharedString,
 
@@ -316,6 +362,37 @@ pub struct Strings {
     pub tags_saved: SharedString,
     pub tag_write_failed_title: SharedString,
 
+    // --- Animations page ---
+    pub settings_animations: SharedString,
+    pub motion_group: SharedString,
+    pub animations_play: SharedString,
+    pub animations_play_desc: SharedString,
+    pub animation_panel_slide: SharedString,
+    pub animation_panel_slide_desc: SharedString,
+    pub animation_view_fade: SharedString,
+    pub animation_view_fade_desc: SharedString,
+    pub animation_track_change: SharedString,
+    pub animation_track_change_desc: SharedString,
+    pub animation_cover_mode: SharedString,
+    pub animation_cover_mode_desc: SharedString,
+    pub animation_settings_open: SharedString,
+    pub animation_settings_open_desc: SharedString,
+    pub animation_cover_fade: SharedString,
+    pub animation_cover_fade_desc: SharedString,
+
+    // --- Version, Online and the portable copy ---
+    pub made_by: SharedString,
+    pub discord_group: SharedString,
+    pub portable_copy: SharedString,
+    pub portable_desc: SharedString,
+    pub portable_include_settings: SharedString,
+    pub portable_include_settings_desc: SharedString,
+    pub portable_include_library: SharedString,
+    pub portable_include_library_desc: SharedString,
+    pub portable_export: SharedString,
+    pub portable_export_button: SharedString,
+    pub portable_choose_folder: SharedString,
+
     // --- Templated (read via the accessor methods below) ---
     pub tags_save_failed_t: SharedString,
     pub disc_t: SharedString,
@@ -329,6 +406,8 @@ pub struct Strings {
     pub failed_switch_device_t: SharedString,
     pub failed_save_settings_t: SharedString,
     pub remote_start_failed_t: SharedString,
+    pub portable_exported_t: SharedString,
+    pub portable_failed_t: SharedString,
 }
 
 /// Replace each `{}` marker in `template` with the next arg, in order.
@@ -346,6 +425,41 @@ fn fill(template: &str, args: &[&str]) -> String {
 }
 
 impl Strings {
+    pub fn duplicates_moved(&self, n: usize) -> String {
+        fill(&self.duplicates_moved_t, &[&n.to_string()])
+    }
+
+    pub fn duplicates_failed(&self, n: usize) -> String {
+        fill(&self.duplicates_failed_t, &[&n.to_string()])
+    }
+
+    pub fn duplicates_more(&self, n: usize) -> String {
+        fill(&self.duplicates_more_t, &[&n.to_string()])
+    }
+
+    pub fn selection_count(&self, n: usize) -> String {
+        fill(&self.selection_count_t, &[&n.to_string()])
+    }
+
+    pub fn playing_from(&self, source: &str) -> String {
+        fill(&self.playing_from_t, &[source])
+    }
+
+    pub fn advanced_clear_covers_done(&self, covers: usize, files: usize) -> String {
+        fill(
+            &self.advanced_clear_covers_done_t,
+            &[&covers.to_string(), &files.to_string()],
+        )
+    }
+
+    pub fn portable_exported(&self, path: &str) -> String {
+        fill(&self.portable_exported_t, &[path])
+    }
+
+    pub fn portable_failed(&self, err: &str) -> String {
+        fill(&self.portable_failed_t, &[err])
+    }
+
     /// Section header for a multi-disc album, e.g. "Disc 2".
     pub fn disc(&self, disc: u32) -> String {
         fill(&self.disc_t, &[&disc.to_string()])

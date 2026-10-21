@@ -80,6 +80,59 @@ fn year_from_str(value: &str) -> Option<i32> {
     }
 }
 
+/// ReplayGain from a file's tags, normalised to dB.
+///
+/// Two conventions are in the wild and both are common in a mixed library:
+/// ReplayGain 2.0 (`REPLAYGAIN_TRACK_GAIN`, "-7.23 dB", against -18 LUFS) and
+/// R128 (`R128_TRACK_GAIN`, an integer in Q7.8 LU against -23 LUFS). R128 is
+/// converted here so nothing downstream has to know which one it was reading.
+///
+/// Peaks are linear and optional; without one, clipping protection simply has
+/// nothing to work with.
+pub(crate) fn read_replaygain(tag: &lofty::tag::Tag) -> music_library::ReplayGain {
+    let gain = |key: ItemKey| -> Option<f32> {
+        tag.get(&key)
+            .and_then(|item| item.value().text())
+            .and_then(parse_gain_db)
+    };
+    let peak = |key: ItemKey| -> Option<f32> {
+        tag.get(&key)
+            .and_then(|item| item.value().text())
+            .and_then(|text| text.trim().parse::<f32>().ok())
+            .filter(|peak| peak.is_finite() && *peak > 0.0)
+    };
+
+    // R128 tags are the fallback: a file normally carries one family or the
+    // other, and ReplayGain 2.0 is what every tagger writes today.
+    let r128 = |name: &str| -> Option<f32> {
+        tag.get_strings(&ItemKey::Unknown(name.to_string()))
+            .next()
+            .and_then(|text| text.trim().parse::<f32>().ok())
+            // Q7.8 LU, referenced to -23 LUFS; ReplayGain is referenced to -18.
+            .map(|raw| raw / 256.0 + 5.0)
+    };
+
+    music_library::ReplayGain {
+        track_gain: gain(ItemKey::ReplayGainTrackGain).or_else(|| r128("R128_TRACK_GAIN")),
+        track_peak: peak(ItemKey::ReplayGainTrackPeak),
+        album_gain: gain(ItemKey::ReplayGainAlbumGain).or_else(|| r128("R128_ALBUM_GAIN")),
+        album_peak: peak(ItemKey::ReplayGainAlbumPeak),
+    }
+}
+
+/// `"-7.23 dB"`, `"+2.5 dB"`, `"-7.23"` — and nothing else.
+fn parse_gain_db(raw: &str) -> Option<f32> {
+    let text = raw.trim();
+    let text = text
+        .strip_suffix("dB")
+        .or_else(|| text.strip_suffix("db"))
+        .unwrap_or(text)
+        .trim();
+    text.parse::<f32>()
+        .ok()
+        .filter(|db| db.is_finite() && db.abs() <= 60.0)
+}
+
 fn is_dsd_extension(path: &Path) -> bool {
     matches!(
         path.extension()
@@ -126,6 +179,7 @@ fn read_dsd_metadata(path: &Path, cache: Option<&CoverCache>) -> anyhow::Result<
         cover_art,
         start_offset_ms: None,
         bitrate: None,
+        replaygain: music_library::ReplayGain::default(),
         is_cue: false,
         lyrics: read_lyrics(path, None),
     })
@@ -154,6 +208,7 @@ fn read_metadata_inner(path: &Path, cache: Option<&CoverCache>) -> anyhow::Resul
     let mut disc_number = None;
     let mut year = None;
     let mut genres = Vec::new();
+    let mut replaygain = music_library::ReplayGain::default();
     let mut embedded = None;
     let mut embedded_lyrics = None;
 
@@ -197,6 +252,7 @@ fn read_metadata_inner(path: &Path, cache: Option<&CoverCache>) -> anyhow::Resul
 
         year = read_year(tag);
         genres = normalize_genres(tag.get_strings(&ItemKey::Genre));
+        replaygain = read_replaygain(tag);
 
         embedded = embedded_cover(tag);
 
@@ -238,6 +294,7 @@ fn read_metadata_inner(path: &Path, cache: Option<&CoverCache>) -> anyhow::Resul
         cover_art,
         start_offset_ms: None,
         bitrate,
+        replaygain,
         is_cue: false,
         lyrics,
     })
@@ -460,10 +517,66 @@ fn contains_word(haystack: &str, needle: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{contains_word, find_external_cover_art, load_cover_from_source, read_sidecar_lrc};
+    use super::{
+        contains_word, find_external_cover_art, load_cover_from_source, parse_gain_db,
+        read_replaygain, read_sidecar_lrc,
+    };
     use crate::types::LyricsSource;
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicU32, Ordering};
+
+    #[test]
+    fn gain_tags_parse_with_and_without_the_unit() {
+        assert_eq!(parse_gain_db("-7.23 dB"), Some(-7.23));
+        assert_eq!(parse_gain_db("+2.5 dB"), Some(2.5));
+        assert_eq!(parse_gain_db("-7.23"), Some(-7.23));
+        assert_eq!(parse_gain_db(" 1.0 db "), Some(1.0));
+        assert_eq!(parse_gain_db("loud"), None);
+        assert_eq!(parse_gain_db(""), None);
+        // A peak pasted into the gain field is not a gain.
+        assert_eq!(parse_gain_db("90"), None);
+    }
+
+    /// ReplayGain 2.0 and the Opus R128 tags both end up in dB, because nothing
+    /// downstream should have to know which one a file used.
+    #[test]
+    fn r128_tags_are_converted_to_replaygain_db() {
+        use lofty::tag::{ItemKey, Tag, TagItem, TagType};
+        let mut tag = Tag::new(TagType::VorbisComments);
+        // `insert_text` silently drops an unknown key; R128 is exactly that, so
+        // the unchecked form is the only way to plant one in a test.
+        // -1770 in Q7.8 LU is -6.914 LUFS against -23; ReplayGain's reference is
+        // -18 LUFS, so the dB value is that plus 5.
+        for (key, value) in [("R128_TRACK_GAIN", "-1770"), ("R128_ALBUM_GAIN", "-2048")] {
+            tag.insert_unchecked(TagItem::new(
+                ItemKey::Unknown(key.to_string()),
+                lofty::tag::ItemValue::Text(value.to_string()),
+            ));
+        }
+
+        let rg = read_replaygain(&tag);
+
+        assert_eq!(rg.track_gain, Some(-1770.0 / 256.0 + 5.0));
+        assert_eq!(rg.album_gain, Some(-2048.0 / 256.0 + 5.0));
+        assert_eq!(rg.track_peak, None);
+    }
+
+    #[test]
+    fn replaygain_tags_win_over_r128() {
+        use lofty::tag::{ItemKey, ItemValue, Tag, TagItem, TagType};
+        let mut tag = Tag::new(TagType::VorbisComments);
+        tag.insert_text(ItemKey::ReplayGainTrackGain, "-7.00 dB".into());
+        tag.insert_text(ItemKey::ReplayGainTrackPeak, "0.988553".into());
+        tag.insert_unchecked(TagItem::new(
+            ItemKey::Unknown("R128_TRACK_GAIN".to_string()),
+            ItemValue::Text("-1770".to_string()),
+        ));
+
+        let rg = read_replaygain(&tag);
+
+        assert_eq!(rg.track_gain, Some(-7.0));
+        assert_eq!(rg.track_peak, Some(0.988553));
+    }
 
     struct TempDir {
         path: PathBuf,

@@ -3,12 +3,9 @@ use std::sync::Arc;
 use audio_common::AudioError;
 use cpal::traits::{DeviceTrait, HostTrait};
 
-#[cfg(target_os = "linux")]
 use std::collections::{BTreeMap, HashMap};
-#[cfg(target_os = "linux")]
 use std::process::Command;
 
-#[cfg(target_os = "linux")]
 use serde::Deserialize;
 
 #[derive(Clone, Debug)]
@@ -67,7 +64,6 @@ impl DeviceManager {
         // matches what the user sees in their system settings. Critically, this
         // avoids cpal's raw ALSA enumeration entirely in the common case, which
         // otherwise probes dmix PCMs and spams "unable to open slave" errors.
-        #[cfg(target_os = "linux")]
         {
             if let Some(sinks) = enum_pulse_sinks() {
                 let list = build_pulse_list(&sinks, pulse_default_sink().as_deref());
@@ -79,12 +75,6 @@ impl DeviceManager {
             let (raw, default_uid) = self.enumerate_cpal()?;
             let longnames = alsa_card_longnames();
             Ok(curate_alsa_cards(raw, default_uid.as_deref(), &longnames))
-        }
-
-        #[cfg(not(target_os = "linux"))]
-        {
-            let (devices, _default_uid) = self.enumerate_cpal()?;
-            Ok(devices)
         }
     }
 
@@ -143,7 +133,6 @@ impl DeviceManager {
     /// dmix failures, stutter, and busy errors. Direct ALSA-PCM selections (the
     /// non-PipeWire fallback) still open their device by UID.
     pub fn resolve_device(&mut self) -> Result<Arc<cpal::Device>, AudioError> {
-        #[cfg(target_os = "linux")]
         {
             if let Some(uid) = self.selected_uid.clone() {
                 if let Some(node) = uid.strip_prefix("pw:") {
@@ -178,30 +167,9 @@ impl DeviceManager {
             set_pipewire_node(pulse_default_sink().as_deref());
             self.default_device()
         }
-
-        #[cfg(not(target_os = "linux"))]
-        {
-            if let Some(uid) = self.selected_uid.clone()
-                && let Some(device) = self.find_by_uid(&uid)?
-            {
-                self.cached_name = device_display_name(&device);
-                return Ok(Arc::new(device));
-            }
-
-            // Fallback: clear stale selection and use system default.
-            if self.selected_uid.is_some() {
-                self.selected_uid = None;
-            }
-            let default = self.host.default_output_device().ok_or_else(|| {
-                AudioError::DeviceNotFound("No default output device".to_string())
-            })?;
-            self.cached_name = device_display_name(&default);
-            Ok(Arc::new(default))
-        }
     }
 
     /// Opens the host default output device (on Linux, the PipeWire ALSA plugin).
-    #[cfg(target_os = "linux")]
     fn default_device(&self) -> Result<Arc<cpal::Device>, AudioError> {
         let default = self
             .host
@@ -220,7 +188,6 @@ impl DeviceManager {
     /// PipeWire-routed device is just `default`, which says nothing about which
     /// sink we play to.
     pub fn resolve_uid(&mut self) -> Result<String, AudioError> {
-        #[cfg(target_os = "linux")]
         {
             if let Some(uid) = self.selected_uid.as_deref()
                 && uid.starts_with("pw:")
@@ -269,7 +236,7 @@ impl DeviceManager {
         // `pw:` UIDs are sound-server sinks, not cpal devices: looking them up
         // would kick off cpal's ALSA enumeration (which spams "unable to open
         // slave") and never match. Their display name comes from the sink list.
-        let is_sink = cfg!(target_os = "linux") && uid.starts_with("pw:");
+        let is_sink = uid.starts_with("pw:");
         if !is_sink && let Ok(Some(d)) = self.find_by_uid(&uid) {
             self.cached_name = device_display_name(&d);
         }
@@ -312,7 +279,6 @@ fn device_uid(d: &cpal::Device) -> Result<String, AudioError> {
         .map_err(|e| AudioError::DeviceNotFound(format!("Could not read device UID: {}", e)))
 }
 
-#[cfg(target_os = "linux")]
 fn extract_card(uid: &str) -> Option<String> {
     let after = uid.split("CARD=").nth(1)?;
     let card = after.split([',', ':']).next()?.trim();
@@ -323,7 +289,6 @@ fn extract_card(uid: &str) -> Option<String> {
     }
 }
 
-#[cfg(target_os = "linux")]
 fn alsa_card_longnames() -> HashMap<String, String> {
     let mut map = HashMap::new();
     for card in alsa::card::Iter::new().flatten() {
@@ -337,7 +302,6 @@ fn alsa_card_longnames() -> HashMap<String, String> {
     map
 }
 
-#[cfg(target_os = "linux")]
 fn pick_best_uid(devices: &[OutputDeviceInfo]) -> String {
     let uids: Vec<&str> = devices.iter().map(|d| d.uid.as_str()).collect();
 
@@ -354,7 +318,6 @@ fn pick_best_uid(devices: &[OutputDeviceInfo]) -> String {
 /// `selected_uid = None`, so cpal opens the host default device — which on a
 /// PipeWire/PulseAudio system routes through the sound server. This is the
 /// safety net: it works even if every curated device below fails to open.
-#[cfg(target_os = "linux")]
 fn system_default_entry() -> OutputDeviceInfo {
     OutputDeviceInfo {
         name: "System Default".to_string(),
@@ -376,7 +339,6 @@ fn system_default_entry() -> OutputDeviceInfo {
 /// effect reliably inside the full GUI app — and a non-env mechanism would be
 /// more correct (see HANDOFF-linux-exclusive-dac.md). The realtime callback
 /// never touches the environment.
-#[cfg(target_os = "linux")]
 pub(crate) fn set_pipewire_node(node: Option<&str>) {
     unsafe {
         match node {
@@ -387,7 +349,6 @@ pub(crate) fn set_pipewire_node(node: Option<&str>) {
 }
 
 /// A PipeWire/PulseAudio output sink, distilled to the fields we need.
-#[cfg(target_os = "linux")]
 #[derive(Debug, Clone)]
 pub(crate) struct PulseSink {
     /// Human-readable name shown by the OS (e.g. "D50 III Headphones").
@@ -404,7 +365,6 @@ pub(crate) struct PulseSink {
 }
 
 /// Shape of one entry in `pactl -f json list sinks`.
-#[cfg(target_os = "linux")]
 #[derive(Deserialize)]
 struct RawPulseSink {
     name: String,
@@ -421,7 +381,6 @@ struct RawPulseSink {
     sample_specification: Option<String>,
 }
 
-#[cfg(target_os = "linux")]
 #[derive(Deserialize)]
 struct RawPulseVolume {
     #[serde(default)]
@@ -431,7 +390,6 @@ struct RawPulseVolume {
 /// Runs `pactl` to enumerate sinks. Returns `None` on any failure (binary
 /// missing, non-zero exit, unparseable output) so the caller degrades to the
 /// ALSA-card path.
-#[cfg(target_os = "linux")]
 fn enum_pulse_sinks() -> Option<Vec<PulseSink>> {
     let output = Command::new("pactl")
         .args(["-f", "json", "list", "sinks"])
@@ -447,7 +405,6 @@ fn enum_pulse_sinks() -> Option<Vec<PulseSink>> {
 /// The current default sink's node name (`pactl get-default-sink`), used to mark
 /// one device as the default and to target it explicitly when following default.
 /// `None` on any failure.
-#[cfg(target_os = "linux")]
 pub(crate) fn pulse_default_sink() -> Option<String> {
     let output = Command::new("pactl")
         .args(["get-default-sink"])
@@ -462,7 +419,6 @@ pub(crate) fn pulse_default_sink() -> Option<String> {
 
 /// Pure parser for `pactl -f json list sinks` output. Split out from
 /// `enum_pulse_sinks` so it can be unit-tested against a captured fixture.
-#[cfg(target_os = "linux")]
 fn parse_pulse_sinks(json: &str) -> Option<Vec<PulseSink>> {
     const VOLUME_NORM: f32 = 65536.0;
 
@@ -486,25 +442,21 @@ fn parse_pulse_sinks(json: &str) -> Option<Vec<PulseSink>> {
     Some(sinks)
 }
 
-#[cfg(target_os = "linux")]
 fn prop_u32(props: &HashMap<String, serde_json::Value>, key: &str) -> Option<u32> {
     props.get(key)?.as_str()?.trim().parse().ok()
 }
 
-#[cfg(target_os = "linux")]
 fn alsa_path_card(props: &HashMap<String, serde_json::Value>) -> Option<u32> {
     let path = props.get("api.alsa.path")?.as_str()?;
     let after = path.split_once(':')?.1;
     after.split(',').next()?.trim().parse().ok()
 }
 
-#[cfg(target_os = "linux")]
 fn parse_spec_rate(spec: &str) -> Option<u32> {
     spec.split_whitespace()
         .find_map(|token| token.strip_suffix("Hz")?.parse().ok())
 }
 
-#[cfg(target_os = "linux")]
 pub(crate) fn sink_status(node: &str) -> Option<PulseSink> {
     let sinks = enum_pulse_sinks()?;
     let target = if node.is_empty() {
@@ -519,7 +471,6 @@ pub(crate) fn sink_status(node: &str) -> Option<PulseSink> {
 /// are the system's devices). Each UID is `pw:<node>`, which `resolve_device`
 /// routes to via `PIPEWIRE_NODE`. The sink matching `default_node` is flagged
 /// `is_default`, so the UI marks it and highlights it while following default.
-#[cfg(target_os = "linux")]
 fn build_pulse_list(sinks: &[PulseSink], default_node: Option<&str>) -> Vec<OutputDeviceInfo> {
     sinks
         .iter()
@@ -535,7 +486,6 @@ fn build_pulse_list(sinks: &[PulseSink], default_node: Option<&str>) -> Vec<Outp
 /// Fallback enumeration: group cpal's raw ALSA PCMs by card, one representative
 /// entry per card. `longnames` is passed in (rather than queried) so the pure
 /// grouping logic is unit-testable without audio hardware.
-#[cfg(target_os = "linux")]
 fn curate_alsa_cards(
     raw: Vec<OutputDeviceInfo>,
     _default_uid: Option<&str>,
@@ -664,7 +614,6 @@ mod tests {
         );
     }
 
-    #[cfg(target_os = "linux")]
     fn dev(uid: &str, name: &str) -> OutputDeviceInfo {
         OutputDeviceInfo {
             name: name.to_string(),
@@ -675,7 +624,6 @@ mod tests {
 
     /// A cpal-style "flood" enumeration for a 3-card system (PCH analog/digital,
     /// ATI HDMI, D50 III USB), mirroring what `host.output_devices()` yields.
-    #[cfg(target_os = "linux")]
     fn cpal_flood() -> Vec<OutputDeviceInfo> {
         vec![
             dev("default", "Default"),
@@ -701,7 +649,6 @@ mod tests {
         ]
     }
 
-    #[cfg(target_os = "linux")]
     const PACTL_FIXTURE: &str = r#"[
         {"index":53,"name":"alsa_output.pci-0000_00_1f.3.iec958-stereo",
          "description":"Built-in Audio Digital Stereo (IEC958)",
@@ -722,7 +669,6 @@ mod tests {
          "properties":{"alsa.id":"HDMI","api.alsa.path":"hw:1,3"}}
     ]"#;
 
-    #[cfg(target_os = "linux")]
     #[test]
     fn parse_pulse_sinks_extracts_description_and_node_name() {
         let sinks = parse_pulse_sinks(PACTL_FIXTURE).expect("fixture must parse");
@@ -741,13 +687,11 @@ mod tests {
         );
     }
 
-    #[cfg(target_os = "linux")]
     #[test]
     fn parse_pulse_sinks_rejects_garbage() {
         assert!(parse_pulse_sinks("not json").is_none());
     }
 
-    #[cfg(target_os = "linux")]
     #[test]
     fn parse_pulse_sinks_reads_volume_mute_rate_and_card() {
         let sinks = parse_pulse_sinks(PACTL_FIXTURE).expect("fixture must parse");
@@ -766,7 +710,6 @@ mod tests {
         assert_eq!(sinks[1].device, Some(0));
     }
 
-    #[cfg(target_os = "linux")]
     #[test]
     fn sinks_without_volume_or_rate_are_treated_as_unity_and_unknown() {
         let sinks = parse_pulse_sinks(PACTL_FIXTURE).expect("fixture must parse");
@@ -776,14 +719,12 @@ mod tests {
         assert_eq!(sinks[2].device, None);
     }
 
-    #[cfg(target_os = "linux")]
     #[test]
     fn card_falls_back_to_the_numeric_alsa_path() {
         let sinks = parse_pulse_sinks(PACTL_FIXTURE).expect("fixture must parse");
         assert_eq!(sinks[2].card, Some(1));
     }
 
-    #[cfg(target_os = "linux")]
     #[test]
     fn spec_rate_is_read_from_a_sample_specification() {
         assert_eq!(parse_spec_rate("s32le 2ch 44100Hz"), Some(44100));
@@ -792,7 +733,6 @@ mod tests {
         assert_eq!(parse_spec_rate("s16le 2ch"), None);
     }
 
-    #[cfg(target_os = "linux")]
     #[test]
     fn build_pulse_list_is_pw_routed_sinks_with_one_default() {
         let sinks = parse_pulse_sinks(PACTL_FIXTURE).unwrap();
@@ -828,7 +768,6 @@ mod tests {
         assert_eq!(defaults, vec!["D50 III Headphones"]);
     }
 
-    #[cfg(target_os = "linux")]
     #[test]
     fn build_pulse_list_skips_sinks_without_node_name() {
         let sinks = vec![PulseSink {
@@ -844,7 +783,6 @@ mod tests {
         assert!(list.is_empty());
     }
 
-    #[cfg(target_os = "linux")]
     #[test]
     fn build_pulse_list_marks_no_default_when_unknown() {
         let sinks = parse_pulse_sinks(PACTL_FIXTURE).unwrap();
@@ -853,7 +791,6 @@ mod tests {
         assert!(list.iter().all(|d| !d.is_default));
     }
 
-    #[cfg(target_os = "linux")]
     #[test]
     fn curate_alsa_cards_groups_one_entry_per_card() {
         let raw = cpal_flood();
@@ -880,7 +817,6 @@ mod tests {
         );
     }
 
-    #[cfg(target_os = "linux")]
     #[test]
     fn curate_alsa_cards_empty_input_is_just_default() {
         let list = curate_alsa_cards(vec![dev("default", "Default")], None, &HashMap::new());

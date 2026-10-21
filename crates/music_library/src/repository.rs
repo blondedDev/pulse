@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use crate::error::Result;
 use crate::models::{
     AlbumSearchEntry, AlbumSummary, ArtistGrouping, ArtistSummary, CoverArt,
-    FolderSummary, GenreSort, GenreSummary, LocalFolder, NewPlay, NewTrack,
+    FolderSummary, LocalFolder, NewPlay, NewTrack,
     PlayTally, PlaylistSummary, RecentPlay, ScanTrack, SourceSummary,
     StoredLyrics, Track, TrackListing, ListeningStats,
 };
@@ -100,17 +100,38 @@ pub trait LibraryRepository: Send + Sync {
     fn artist_search_haystacks(&self, grouping: ArtistGrouping) -> Result<HashMap<i64, String>>;
     fn artist_album_covers(&self, grouping: ArtistGrouping) -> Result<HashMap<i64, Vec<i64>>>;
     fn tracks_by_artist(&self, artist_id: i64, grouping: ArtistGrouping) -> Result<Vec<Track>>;
-    fn genres(&self) -> Result<Vec<GenreSummary>>;
-    fn genre_album_covers(&self) -> Result<HashMap<String, Vec<i64>>>;
-    fn tracks_by_genre(&self, key: &str, sort: GenreSort) -> Result<Vec<Track>>;
     /// Configured local roots that contain at least one track. These are the
     /// top level of the folder hierarchy.
     fn folder_roots(&self) -> Result<Vec<FolderSummary>>;
     /// Immediate subdirectories of `path` that contain at least one track.
     fn child_folders(&self, path: &str) -> Result<Vec<FolderSummary>>;
+    /// The ReplayGain tags for one track, or `None` when it has none.
+    ///
+    /// Read once per track load rather than carried on [`Track`](crate::Track):
+    /// the gain is never rendered in a list, and the row type is hot.
+    fn replaygain(&self, track_id: i64) -> Result<Option<crate::ReplayGain>>;
     /// Tracks at or below `path`, ordered for display.
     fn tracks_in_folder(&self, path: &str) -> Result<Vec<Track>>;
+    /// Tracks sitting *directly* in `path`, in the same order as
+    /// [`tracks_in_folder`](Self::tracks_in_folder).
+    ///
+    /// The folder browser offers these as their own row: without it, a folder
+    /// that holds both subdirectories and files hides the files behind the
+    /// subdirectory list, because only the subtree is ever reachable.
+    fn tracks_directly_in_folder(&self, path: &str) -> Result<Vec<Track>>;
+    /// How many tracks sit *directly* in `path`, not in a subdirectory of it.
+    ///
+    /// Separate from [`tracks_in_folder`](Self::tracks_in_folder), which counts
+    /// the whole subtree: a folder browser shows the direct ones as their own row
+    /// so a folder that has both subdirectories and loose files does not hide
+    /// those files behind the subdirectory list.
+    fn direct_track_count(&self, path: &str) -> Result<i64>;
     fn track(&self, id: i64) -> Result<Option<Track>>;
+    /// Every track whose id is in `ids`, in whatever order the query returns.
+    ///
+    /// One query for the whole set rather than [`track`](Self::track) per id:
+    /// restoring a persisted playback queue asks for thousands at startup.
+    fn tracks_by_ids(&self, ids: &[i64]) -> Result<Vec<Track>>;
     fn all_tracks(&self) -> Result<Vec<Track>>;
     fn track_count(&self) -> Result<i64>;
 
@@ -172,6 +193,7 @@ pub trait LibraryRepository: Send + Sync {
 
     fn play_tallies(&self, since: Option<u64>) -> Result<Vec<PlayTally>>;
     fn recent_plays(&self, limit: usize) -> Result<Vec<RecentPlay>>;
+
     /// Listening history summarised: totals plus the top artists, albums and
     /// tracks. `since` filters on when the play started.
     fn listening_stats(&self, since: Option<u64>, limit: usize) -> Result<ListeningStats>;

@@ -18,14 +18,23 @@ tries hard to stay out of the way while it plays.
 ### 📚 Library
 - 🗂️ Indexes folders you choose — and keeps watching them, so new files appear
   without a click.
+- 🧹 **Duplicate finder** (Settings → Advanced): rank your folders once, best
+  first, and every song found in more than one of them keeps the copy from the
+  best folder. The rest move to the desktop Trash. Folders you do not list are
+  never touched.
 - 🎼 Browse by **album**, **artist**, **genre**, **folder**, **playlist**, or one
   flat **All Tracks** list.
 - ⚡ **Ctrl+K** opens a command palette over everything.
+- ☑️ **Multi-select** in every track list: shift-click a range, ctrl-click to add,
+  then queue the lot or drop it into a playlist.
 - 💿 Cue-sheet aware, with an adoption layer so a re-rip or a moved folder
   doesn't duplicate your play history.
 
 ### ▶️ Playback
 - 🔊 Native sample rate through PipeWire, exclusively if you want it.
+- 📊 **ReplayGain** — per track or per album, with clipping protection, read from
+  the tags your files already carry (ReplayGain 2.0 and R128). Off by default, and
+  the native-sample-rate output is never touched.
 - ⏭️ A real **play-next queue** — queue a song and it plays next; queue more and
   they follow in the order you queued them.
 - 🔀 Shuffle and repeat, an always-there **cover view**, and a now-playing bar
@@ -77,12 +86,11 @@ install -m 755 pulse ~/.local/bin/pulse
 ### From source
 
 ```sh
-cargo build --release -p pawse
+cargo build --release -p pulse
 install -m 755 target/release/pulse ~/.local/bin/pulse
 ```
 
-The crate is `pawse`; the binary it produces is `pulse`. That split is
-deliberate and is not going to be "fixed".
+The crate is `pulse` and it produces a binary called `pulse`.
 
 The remote UI in `web/` is a Svelte app embedded into the binary at build time —
 rebuild it after changing anything there:
@@ -90,6 +98,11 @@ rebuild it after changing anything there:
 ```sh
 cd web && npm install && npm run build
 ```
+
+A **debug** build embeds nothing (`pulse_remote` only embeds `web/dist` in
+release), so `cargo run` with the remote turned on serves 404s until you build
+the web app or run Vite's dev server. Release builds need `web/dist/` to exist
+before `cargo build --release`, or the binary ships without a remote UI.
 
 ## ⌨️ Keyboard
 
@@ -131,8 +144,8 @@ second.
 
 ```
 crates/
-  pawse/            the application (binary name: pulse)
-  pawse_remote/     remote control server + embedded web UI
+  pulse/            the application (binary name: pulse)
+  pulse_remote/     remote control server + embedded web UI
   music_library/    SQLite schema, queries, identity/adoption
   music_indexer/    scanning, tag parsing, cue sheets
   audio_*/          playback engine, decoders, PipeWire/ALSA output
@@ -148,11 +161,16 @@ load-bearing.
 
 ## 📝 Notes
 
-- Crate and package names are still `pawse` / `pawse_remote`; only the product,
-  the binary and the on-disk paths were renamed.
+- Crate, package, binary and on-disk names are all `pulse` / `pulse_remote` /
+  `pulse-music` now; the `pawse` spellings survive only in the legacy migration
+  and in old database rows (see below).
 - Track rows written by an older build may carry a `pawse-source://` locator. It
   is recognised and treated as "no local file" rather than handed to the
   decoder.
+- The playback queue is stored in `settings.json` as **locators** (id + path),
+  not as copies of each track. The catalog already holds the titles and covers,
+  so a re-tagged track shows its new title in the queue after a restart, and a
+  file that moved while the app was closed is found again by its id.
 - Motion is optional by design: every animation has its own switch plus a master
   switch. Turned off, the app is exactly as usable — just still.
 

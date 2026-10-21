@@ -10,7 +10,7 @@ Two directions cross this boundary:
   position to MPRIS.
 - **Inbound**: the desktop sends transport commands (play / pause / next / seek …)
   back as `MediaCommand` values down a `flume::Sender` the caller supplied. The
-  receiving end lives in `pawse::media_bridge`, not here.
+  receiving end lives in `pulse::media_bridge`, not here.
 
 ## Responsibilities
 
@@ -72,7 +72,7 @@ Two directions cross this boundary:
 
 The integration is owned by `MainView` and dies with the window, which is correct
 because the app quits when the last window closes. This wiring lives in
-`pawse::media_bridge`; see `.docs/project.md`.
+`pulse::media_bridge`; see `.docs/project.md`.
 
 ## Scope
 

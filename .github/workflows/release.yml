@@ -3,7 +3,10 @@ name: Release
 on:
   push:
     tags:
+      # Both spellings: 4.1 would not match "v*", and the 4.0 tag that already
+      # exists is the bare form. Digit-first catches 4.1, 4.1.0 and so on.
       - "v*"
+      - "[0-9]*"
   workflow_dispatch:
 
 permissions:
@@ -34,7 +37,7 @@ jobs:
           fi
 
       - name: Build Pulse
-        run: cargo build --release -p pawse
+        run: cargo build --release -p pulse
 
       - name: Package
         run: |

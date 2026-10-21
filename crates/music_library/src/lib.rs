@@ -14,8 +14,8 @@ pub use error::{LibraryError, Result};
 pub use genres::normalize_genres;
 pub use models::{
     Album, AlbumSearchEntry, AlbumSummary, Artist, ArtistGrouping, ArtistSummary, CoverArt,
-    FolderSummary, GenreSort, GenreSummary, IntegrityReport, LocalFolder, NewTrack, PlayTally,
-    Playlist, PlaylistSummary, RecentPlay, ListeningStats, StatEntry,
+    FolderSummary, IntegrityReport, LocalFolder, NewTrack, PlayTally,
+    Playlist, PlaylistSummary, RecentPlay, ListeningStats, StatEntry, ReplayGain,
     ScanLyrics, ScanTrack, SourceSummary, StoredLyrics, Track, TrackListing, lyrics_source,
     split_folder_path,
 };
@@ -484,6 +484,109 @@ mod tests {
         );
 
         assert!(lib.tracks_by_keys(&[]).unwrap().is_empty());
+    }
+
+    /// ReplayGain lives beside the catalog row, not on it, so this pins both the
+    /// round trip and the cascade when a scan clears the catalog.
+    #[test]
+    fn replaygain_is_stored_read_back_and_cleared_with_the_catalog() {
+        let (lib, _path) = create_test_db();
+        let mut session = lib.open_scan_session().unwrap();
+        session.clear().unwrap();
+        session
+            .add_track(ScanTrack {
+                path: "/m/a.flac".into(),
+                title: Some("A".into()),
+                replaygain: ReplayGain {
+                    track_gain: Some(-7.5),
+                    track_peak: Some(0.98),
+                    album_gain: Some(-6.0),
+                    album_peak: Some(0.99),
+                },
+                ..Default::default()
+            })
+            .unwrap();
+        session.finish().unwrap();
+
+        let id = lib.all_tracks().unwrap()[0].id;
+        let stored = lib.replaygain(id).unwrap().expect("gain row");
+        assert_eq!(stored.track_gain, Some(-7.5));
+        assert_eq!(stored.album_gain, Some(-6.0));
+        assert_eq!(stored.track_peak, Some(0.98));
+
+        // A track with no tags gets no row at all.
+        let mut session = lib.open_scan_session().unwrap();
+        session.clear().unwrap();
+        session
+            .add_track(ScanTrack {
+                path: "/m/b.flac".into(),
+                title: Some("B".into()),
+                ..Default::default()
+            })
+            .unwrap();
+        session.finish().unwrap();
+        assert!(lib.replaygain(id).unwrap().is_none(), "cleared with the catalog");
+    }
+
+    #[test]
+    fn test_tracks_by_ids_returns_every_match_and_ignores_unknown_ids() {
+        let (lib, _path) = create_test_db();
+        let artist_id = lib.upsert_artist("Artist").unwrap();
+
+        let ids: Vec<i64> = ["/a.flac", "/b.flac"]
+            .into_iter()
+            .map(|path| {
+                let t = NewTrack {
+                    path: path.into(),
+                    title: Some(path.into()),
+                    ..Default::default()
+                };
+                lib.upsert_track(&t, None, &[(artist_id, 0)]).unwrap()
+            })
+            .collect();
+
+        // Out of order and with an id that does not exist: both are the caller's
+        // problem, not the query's.
+        let mut found: Vec<String> = lib
+            .tracks_by_ids(&[ids[1], ids[0], 99_999])
+            .unwrap()
+            .into_iter()
+            .map(|t| t.title)
+            .collect();
+        found.sort();
+        assert_eq!(found, vec!["/a.flac".to_string(), "/b.flac".to_string()]);
+
+        // Repeats must not come back twice.
+        assert_eq!(lib.tracks_by_ids(&[ids[0], ids[0]]).unwrap().len(), 1);
+
+        assert!(lib.tracks_by_ids(&[]).unwrap().is_empty());
+    }
+
+    /// A restored playback queue asks for thousands of ids at once, so the query
+    /// runs in batches. Mirrors `test_tracks_by_keys_chunks_beyond_parameter_limit`:
+    /// more ids than one batch holds, and every one of them has to come back.
+    #[test]
+    fn test_tracks_by_ids_collects_across_batches() {
+        let (lib, _path) = create_test_db();
+        let artist_id = lib.upsert_artist("Artist").unwrap();
+
+        let mut ids: Vec<i64> = Vec::new();
+        for i in 0..1100 {
+            let track = NewTrack {
+                path: format!("/music/{i}.flac"),
+                title: Some(format!("T{i}")),
+                ..Default::default()
+            };
+            ids.push(
+                lib.upsert_track(&track, None, &[(artist_id, 0)])
+                    .unwrap(),
+            );
+        }
+
+        // Reversed, so the answer cannot come back in insertion order by luck.
+        ids.reverse();
+        let found = lib.tracks_by_ids(&ids).unwrap();
+        assert_eq!(found.len(), 1100);
     }
 
     #[test]
@@ -3059,6 +3162,7 @@ mod tests {
                 bitrate: None,
                 lyrics: Vec::new(),
                 file_size: None,
+                replaygain: Default::default(),
             })
             .unwrap();
         session
@@ -3204,6 +3308,7 @@ mod tests {
                 bitrate: None,
                 lyrics: Vec::new(),
                 file_size: None,
+                replaygain: Default::default(),
             })
             .unwrap();
         session.finish().unwrap();
@@ -3238,6 +3343,7 @@ mod tests {
                     bitrate: None,
                     lyrics: Vec::new(),
                     file_size: None,
+                    replaygain: Default::default(),
                 })
                 .unwrap();
         }
@@ -3274,6 +3380,7 @@ mod tests {
                     source: "lrclib".into(),
                 }],
                 file_size: None,
+                replaygain: Default::default(),
             })
             .unwrap();
         session.finish().unwrap();
@@ -3311,6 +3418,7 @@ mod tests {
                     source: "embedded".into(),
                 }],
                 file_size: None,
+                replaygain: Default::default(),
             })
             .unwrap();
         session.finish().unwrap();
@@ -3553,6 +3661,7 @@ mod tests {
                 bitrate: None,
                 lyrics: Vec::new(),
                 file_size: None,
+                replaygain: Default::default(),
             })
             .unwrap();
         session.finish().unwrap();
@@ -3726,6 +3835,124 @@ mod tests {
 
     fn count_of(artists: &[ArtistSummary], id: i64) -> Option<i64> {
         artists.iter().find(|a| a.id == id).map(|a| a.track_count)
+    }
+
+    /// How many separate album blocks a display order produces. The views group
+    /// *consecutive* equal album ids, so this is exactly the number of album
+    /// headers the user would see for the albums present.
+    fn album_blocks(ids: &[Option<i64>]) -> usize {
+        let mut blocks = 0;
+        let mut last: Option<Option<i64>> = None;
+        for id in ids {
+            if last != Some(*id) {
+                blocks += 1;
+                last = Some(*id);
+            }
+        }
+        blocks
+    }
+
+    /// Two albums whose titles differ only by case are two `albums` rows —
+    /// `upsert_album` matches the *exact* title — but they compare equal under
+    /// the display order's `COLLATE NOCASE`. Without `al.id` between the title
+    /// and the track number their tracks interleave, and the artist page renders
+    /// one album as several headers with its songs split across them.
+    #[test]
+    fn albums_differing_only_in_case_render_as_one_block() {
+        let (lib, _path) = create_test_db();
+        let band = lib.upsert_artist("Band").unwrap();
+        let lower = lib.upsert_album("twin", Some(2018), None).unwrap();
+        let upper = lib.upsert_album("Twin", Some(2018), None).unwrap();
+        assert_ne!(lower, upper, "the album merge key is the exact title");
+        for n in 1..=2 {
+            insert_album_track(
+                &lib,
+                &format!("/lo/{n}.flac"),
+                Some(lower),
+                Some(n),
+                &[(band, 0)],
+            );
+            insert_album_track(
+                &lib,
+                &format!("/up/{n}.flac"),
+                Some(upper),
+                Some(n),
+                &[(band, 0)],
+            );
+        }
+
+        let rows = lib
+            .tracks_by_artist(band, ArtistGrouping::TrackArtist)
+            .unwrap();
+        let ids: Vec<Option<i64>> = rows.iter().map(|t| t.album_id).collect();
+
+        assert_eq!(
+            album_blocks(&ids),
+            2,
+            "each album must be one contiguous block, got {ids:?}"
+        );
+    }
+
+    /// The same guarantee for the folder screen, which groups the same way.
+    #[test]
+    fn a_folder_listing_keeps_each_album_in_one_block() {
+        let (lib, _path) = create_test_db();
+        let band = lib.upsert_artist("Band").unwrap();
+        let lower = lib.upsert_album("twin", Some(2018), None).unwrap();
+        let upper = lib.upsert_album("Twin", Some(2018), None).unwrap();
+        for n in 1..=2 {
+            insert_album_track(
+                &lib,
+                &format!("/mixed/lo{n}.flac"),
+                Some(lower),
+                Some(n),
+                &[(band, 0)],
+            );
+            insert_album_track(
+                &lib,
+                &format!("/mixed/up{n}.flac"),
+                Some(upper),
+                Some(n),
+                &[(band, 0)],
+            );
+        }
+
+        let rows = lib.tracks_in_folder("/mixed").unwrap();
+        let ids: Vec<Option<i64>> = rows.iter().map(|t| t.album_id).collect();
+
+        assert_eq!(
+            album_blocks(&ids),
+            2,
+            "each album must be one contiguous block, got {ids:?}"
+        );
+    }
+
+    /// Two files in one root are two tracks by design, so an album can hold the
+    /// same (disc, track) twice. Their order still has to be stable, or the
+    /// album screen reshuffles identical-looking rows between openings.
+    #[test]
+    fn duplicate_copies_of_one_track_order_deterministically() {
+        let (lib, _path) = create_test_db();
+        let band = lib.upsert_artist("Band").unwrap();
+        let album = lib.upsert_album("Twice", Some(2020), None).unwrap();
+        insert_album_track(&lib, "/a/01.mp3", Some(album), Some(1), &[(band, 0)]);
+        insert_album_track(&lib, "/b/01.m4a", Some(album), Some(1), &[(band, 0)]);
+
+        let first: Vec<String> = lib
+            .tracks_for_album(album)
+            .unwrap()
+            .into_iter()
+            .map(|t| t.path)
+            .collect();
+        let again: Vec<String> = lib
+            .tracks_for_album(album)
+            .unwrap()
+            .into_iter()
+            .map(|t| t.path)
+            .collect();
+
+        assert_eq!(first, again);
+        assert_eq!(first.len(), 2);
     }
 
     #[test]
@@ -4483,187 +4710,6 @@ mod tests {
             duration_ms: Some(180_000),
             ..Default::default()
         }
-    }
-
-    fn genre_titles(lib: &SqliteLibrary, key: &str, sort: GenreSort) -> Vec<String> {
-        lib.tracks_by_genre(key, sort)
-            .unwrap()
-            .into_iter()
-            .map(|t| t.title)
-            .collect()
-    }
-
-    #[test]
-    fn genres_merge_casing_and_count_each_track_once() {
-        let (lib, _path) = create_test_db();
-        scan(
-            &lib,
-            vec![
-                genre_track("/m/a.flac", Some(("A", "Band", Some(2000))), 1, &["Rock"]),
-                genre_track(
-                    "/m/b.flac",
-                    Some(("A", "Band", Some(2000))),
-                    2,
-                    &["rock", "Jazz"],
-                ),
-                genre_track("/m/c.flac", Some(("A", "Band", Some(2000))), 3, &[]),
-                genre_track("/m/d.flac", Some(("A", "Band", Some(2000))), 4, &["Jazz"]),
-            ],
-        );
-
-        let genres = lib.genres().unwrap();
-        let listed: Vec<(&str, i64)> = genres
-            .iter()
-            .map(|g| (g.key.as_str(), g.track_count))
-            .collect();
-        assert_eq!(listed, vec![("jazz", 2), ("rock", 2)]);
-        assert_eq!(genres[1].name, "Rock", "shown under the first spelling met");
-    }
-
-    #[test]
-    fn a_genre_whose_tracks_are_gone_is_not_listed() {
-        let (lib, _path) = create_test_db();
-        scan(
-            &lib,
-            vec![
-                genre_track("/m/a.flac", Some(("A", "Band", Some(2000))), 1, &["Rock"]),
-                genre_track("/m/b.flac", Some(("A", "Band", Some(2000))), 2, &["Jazz"]),
-            ],
-        );
-        scan(
-            &lib,
-            vec![genre_track(
-                "/m/a.flac",
-                Some(("A", "Band", Some(2000))),
-                1,
-                &["Rock"],
-            )],
-        );
-
-        let keys: Vec<String> = lib.genres().unwrap().into_iter().map(|g| g.key).collect();
-        assert_eq!(keys, vec!["rock".to_string()]);
-        assert!(
-            lib.tracks_by_genre("jazz", GenreSort::Artist)
-                .unwrap()
-                .is_empty()
-        );
-    }
-
-    #[rstest::rstest]
-    #[case::by_artist(
-        GenreSort::Artist,
-        &["/m/aardvark.flac", "/m/alpha.flac", "/m/beta-1990.flac", "/m/beta-2010-1.flac",
-          "/m/beta-2010-2.flac", "/m/loner.flac"]
-    )]
-    #[case::by_year(
-        GenreSort::Year,
-        &["/m/beta-1990.flac", "/m/alpha.flac", "/m/beta-2010-1.flac", "/m/beta-2010-2.flac",
-          "/m/aardvark.flac", "/m/loner.flac"]
-    )]
-    fn tracks_by_genre_keep_albums_whole_in_the_chosen_order(
-        #[case] sort: GenreSort,
-        #[case] expected: &[&str],
-    ) {
-        let (lib, _path) = create_test_db();
-        scan(
-            &lib,
-            vec![
-                genre_track(
-                    "/m/beta-2010-2.flac",
-                    Some(("Late", "Beta", Some(2010))),
-                    2,
-                    &["Rock"],
-                ),
-                genre_track(
-                    "/m/beta-2010-1.flac",
-                    Some(("Late", "Beta", Some(2010))),
-                    1,
-                    &["Rock"],
-                ),
-                genre_track("/m/loner.flac", None, 1, &["Rock"]),
-                genre_track(
-                    "/m/beta-1990.flac",
-                    Some(("Early", "Beta", Some(1990))),
-                    1,
-                    &["Rock"],
-                ),
-                genre_track(
-                    "/m/aardvark.flac",
-                    Some(("Undated", "Aardvark", None)),
-                    1,
-                    &["Rock"],
-                ),
-                genre_track(
-                    "/m/alpha.flac",
-                    Some(("Mid", "Alpha", Some(2000))),
-                    1,
-                    &["Rock"],
-                ),
-                genre_track(
-                    "/m/alpha-jazz.flac",
-                    Some(("Mid", "Alpha", Some(2000))),
-                    2,
-                    &["Jazz"],
-                ),
-            ],
-        );
-        lib.resolve_album_artists().unwrap();
-
-        assert_eq!(genre_titles(&lib, "rock", sort), expected);
-    }
-
-    #[test]
-    fn tracks_by_genre_resolve_by_the_lowercased_key() {
-        let (lib, _path) = create_test_db();
-        scan(
-            &lib,
-            vec![
-                genre_track("/m/a.flac", Some(("A", "Band", Some(2000))), 1, &["ROCK"]),
-                genre_track("/m/b.flac", Some(("A", "Band", Some(2000))), 2, &["Rock"]),
-            ],
-        );
-
-        assert_eq!(
-            genre_titles(&lib, "rock", GenreSort::Artist),
-            vec!["/m/a.flac".to_string(), "/m/b.flac".to_string()]
-        );
-        assert!(genre_titles(&lib, "Rock", GenreSort::Artist).is_empty());
-        assert!(genre_titles(&lib, "polka", GenreSort::Artist).is_empty());
-    }
-
-    #[test]
-    fn genre_covers_are_capped_at_three_most_used_album_first() {
-        let (lib, _path) = create_test_db();
-        let cover = |rgb: [u8; 3]| {
-            lib.save_cover_art(&make_test_jpeg(&rgb), "/music/a.flac", true)
-                .unwrap()
-        };
-        let (c1, c2, c3, c4) = (
-            cover([255, 0, 0]),
-            cover([0, 255, 0]),
-            cover([0, 0, 255]),
-            cover([128, 128, 0]),
-        );
-        let artist = lib.upsert_artist("Band").unwrap();
-        let mut n = 0;
-        let mut add = |title: &str, cover: Option<i64>, tracks: usize, genre: &str| {
-            let album = lib.upsert_album(title, Some(2000), cover).unwrap();
-            for _ in 0..tracks {
-                n += 1;
-                let path = format!("/m/{n}.flac");
-                let id = insert_album_track(&lib, &path, Some(album), Some(n), &[(artist, 0)]);
-                lib.set_track_genres(id, &[genre.to_string()]).unwrap();
-            }
-        };
-        add("B", Some(c2), 1, "Rock");
-        add("A", Some(c1), 3, "Rock");
-        add("D", Some(c4), 1, "Rock");
-        add("C", Some(c3), 2, "Rock");
-        add("Bare", None, 2, "Jazz");
-
-        let covers = lib.genre_album_covers().unwrap();
-        assert_eq!(covers.get("rock"), Some(&vec![c1, c3, c2]));
-        assert!(!covers.contains_key("jazz"));
     }
 
     #[test]

@@ -1,6 +1,6 @@
 # ui_components
 
-Reusable GPUI widgets shared across the app. Free of app-level dependencies so `pawse`
+Reusable GPUI widgets shared across the app. Free of app-level dependencies so `pulse`
 can depend on it without cycles.
 
 ## Files
@@ -38,7 +38,7 @@ scrobble-rules page in 4.0, so only the gap remains). Off by default: most group
 have two or three short rows.
 
 Widget owns **only layout**. All behavior lives in `SettingField::render` closures
-supplied by the caller (`pawse` → `settings_view.rs`).
+supplied by the caller (`pulse` → `settings_view.rs`).
 
 ### State
 
@@ -99,7 +99,7 @@ sites (`on_drop`, the capture-phase `on_mouse_event`) pass the release position 
 
 ### Track progress integration
 
-`crates/pawse/src/track_progress_slider.rs` wraps the slider with `live_update = false`.
+`crates/pulse/src/track_progress_slider.rs` wraps the slider with `live_update = false`.
 Guards: skips engine `PositionChanged` events while `is_interacting()` or when the delta
 is `≥ 0.5` s (stale events after seek would otherwise snap the slider back). Disabled
 until `EngineEvent::Loaded`.

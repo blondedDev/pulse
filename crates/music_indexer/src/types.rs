@@ -62,6 +62,7 @@ pub struct ScannedTrack {
     pub cover_art: Option<CoverArt>,
     pub start_offset_ms: Option<u64>,
     pub bitrate: Option<u32>,
+    pub replaygain: music_library::ReplayGain,
     pub is_cue: bool,
     pub lyrics: Vec<IndexedLyrics>,
 }
@@ -82,6 +83,7 @@ impl ScannedTrack {
             cover_hash,
             start_offset_ms: self.start_offset_ms,
             bitrate: self.bitrate,
+            replaygain: self.replaygain,
             is_cue: self.is_cue,
             lyrics: self.lyrics,
         }
@@ -106,6 +108,7 @@ pub struct PreparedTrack {
     pub cover_hash: Option<String>,
     pub start_offset_ms: Option<u64>,
     pub bitrate: Option<u32>,
+    pub replaygain: music_library::ReplayGain,
     pub is_cue: bool,
     pub lyrics: Vec<IndexedLyrics>,
 }

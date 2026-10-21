@@ -56,45 +56,30 @@ pub fn native_mode_available() -> bool {
     static AVAILABLE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
 
     *AVAILABLE.get_or_init(|| {
-        #[cfg(target_os = "linux")]
         {
             pipewire_running() && alsa_server_plugins().pipewire
-        }
-
-        #[cfg(not(target_os = "linux"))]
-        {
-            true
         }
     })
 }
 
 pub fn pipewire_alsa_missing() -> bool {
-    #[cfg(target_os = "linux")]
     {
         let plugins = alsa_server_plugins();
         pipewire_running() && !plugins.pipewire && !plugins.pulse
     }
-
-    #[cfg(not(target_os = "linux"))]
-    {
-        false
-    }
 }
 
-#[cfg(target_os = "linux")]
 fn pipewire_running() -> bool {
     std::env::var_os("XDG_RUNTIME_DIR")
         .is_some_and(|dir| std::path::Path::new(&dir).join("pipewire-0").exists())
 }
 
-#[cfg(target_os = "linux")]
 #[derive(Clone, Copy)]
 struct AlsaServerPlugins {
     pipewire: bool,
     pulse: bool,
 }
 
-#[cfg(target_os = "linux")]
 fn alsa_server_plugins() -> AlsaServerPlugins {
     static PLUGINS: std::sync::OnceLock<AlsaServerPlugins> = std::sync::OnceLock::new();
 
@@ -135,6 +120,9 @@ pub struct Output {
     // App-level digital volume. Survives an exclusive round-trip (where it is
     // not applied) so the shared stream comes back at the user's level.
     app_volume: AtomicF32,
+    /// ReplayGain for the current track. Applied on the shared path only, next
+    /// to the volume; exclusive/native mode stays untouched.
+    track_gain: AtomicF32,
     follow_default: AtomicBool,
     default_watch: Option<default_watch::DefaultDeviceWatcher>,
     play_intent: AtomicBool,
@@ -245,6 +233,7 @@ impl Output {
             source_bit_depth: AtomicU8::new(0),
             source_present: AtomicBool::new(false),
             app_volume: AtomicF32::new(1.0),
+            track_gain: AtomicF32::new(1.0),
             follow_default: AtomicBool::new(true),
             default_watch: default_watch::DefaultDeviceWatcher::start(),
             play_intent: AtomicBool::new(false),
@@ -479,7 +468,6 @@ impl Output {
         // `resolve_device`), so target the current default sink explicitly —
         // the last-resort fallback must reach the system default device and not
         // be silently rerouted by PipeWire's stream-restore.
-        #[cfg(target_os = "linux")]
         crate::device::set_pipewire_node(crate::device::pulse_default_sink().as_deref());
 
         let Some(device) = self.host.default_output_device() else {
@@ -635,7 +623,20 @@ impl Output {
     fn apply_current_volume(&self) {
         if let Some(OutputMode::Shared(s)) = self.current.read().as_ref() {
             s.set_volume(self.app_volume.load(Ordering::Relaxed));
+            // Both levels are pushed together: every path that builds or swaps a
+            // stream calls this one, so neither can be forgotten.
+            s.set_track_gain(self.track_gain.load(Ordering::Relaxed));
         }
+    }
+
+    /// ReplayGain for the track that is about to play, as a linear multiplier.
+    ///
+    /// Ignored in exclusive/native-sample-rate mode, which exists to deliver the
+    /// file's samples unmodified.
+    pub fn set_track_gain(&self, gain: f32) {
+        self.track_gain
+            .store(gain.clamp(0.0, 4.0), Ordering::Relaxed);
+        self.apply_current_volume();
     }
 
     pub fn is_exclusive(&self) -> bool {

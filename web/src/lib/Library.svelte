@@ -3,10 +3,12 @@
   import { Remote } from "./connection.svelte";
   import ArtistBrowser from "./ArtistBrowser.svelte";
   import PlaylistBrowser from "./PlaylistBrowser.svelte";
+  import FolderBrowser from "./FolderBrowser.svelte";
+  import AllTracks from "./AllTracks.svelte";
 
   let { remote, onclose }: { remote: Remote; onclose: () => void } = $props();
 
-  let tab = $state<"artists" | "playlists">("artists");
+  let tab = $state<"artists" | "folders" | "all" | "playlists">("artists");
 
   let artistBrowser = $state<ArtistBrowser | null>(null);
   let aInDetail = $state(false);
@@ -18,8 +20,28 @@
   let plInDetail = $state(false);
   let plName = $state("");
 
+  let folderBrowser = $state<FolderBrowser | null>(null);
+  let fInDetail = $state(false);
+  let fName = $state("");
+
   const activeInDetail = $derived(
-    tab === "artists" ? aInDetail : tab === "playlists" ? plInDetail : false,
+    tab === "artists"
+      ? aInDetail
+      : tab === "folders"
+        ? fInDetail
+        : tab === "playlists"
+          ? plInDetail
+          : false,
+  );
+
+  const tabTitle = $derived(
+    tab === "artists"
+      ? "Artists"
+      : tab === "folders"
+        ? "Folders"
+        : tab === "all"
+          ? "All tracks"
+          : "Playlists",
   );
 
   const title = $derived(
@@ -27,13 +49,20 @@
       ? aInDetail
         ? aName
         : "Artists"
-      : plInDetail
-        ? plName
-        : "Playlists",
+      : tab === "folders"
+        ? fInDetail
+          ? fName
+          : "Folders"
+        : tab === "playlists"
+          ? plInDetail
+            ? plName
+            : "Playlists"
+          : tabTitle,
   );
 
   function goBack() {
     if (tab === "artists") artistBrowser?.goBack();
+    else if (tab === "folders") folderBrowser?.goBack();
     else if (tab === "playlists") plBrowser?.goBack();
   }
 </script>
@@ -92,6 +121,22 @@
       </button>
       <button
         class={`flex-shrink-0 rounded-full px-3 py-1.5 text-sm font-semibold tracking-wide transition ${
+          tab === "folders" ? "bg-white/10 text-white" : "text-neutral-400 hover:text-neutral-200"
+        }`}
+        onclick={() => (tab = "folders")}
+      >
+        Folders
+      </button>
+      <button
+        class={`flex-shrink-0 rounded-full px-3 py-1.5 text-sm font-semibold tracking-wide transition ${
+          tab === "all" ? "bg-white/10 text-white" : "text-neutral-400 hover:text-neutral-200"
+        }`}
+        onclick={() => (tab = "all")}
+      >
+        All tracks
+      </button>
+      <button
+        class={`flex-shrink-0 rounded-full px-3 py-1.5 text-sm font-semibold tracking-wide transition ${
           tab === "playlists" ? "bg-white/10 text-white" : "text-neutral-400 hover:text-neutral-200"
         }`}
         onclick={() => (tab = "playlists")}
@@ -110,6 +155,17 @@
       bind:detailHasPartial={aHasPartial}
       bind:detailFull={aFull}
     />
+  </div>
+  <div class={`min-h-0 flex-1 flex-col ${tab === "folders" ? "flex" : "hidden"}`}>
+    <FolderBrowser
+      bind:this={folderBrowser}
+      {remote}
+      bind:inDetail={fInDetail}
+      bind:detailName={fName}
+    />
+  </div>
+  <div class={`min-h-0 flex-1 flex-col ${tab === "all" ? "flex" : "hidden"}`}>
+    <AllTracks {remote} />
   </div>
   <div class={`min-h-0 flex-1 flex-col ${tab === "playlists" ? "flex" : "hidden"}`}>
     <PlaylistBrowser

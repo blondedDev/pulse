@@ -41,6 +41,13 @@ pub fn process_cue_file(cue_path: &Path) -> anyhow::Result<Vec<ScannedTrack>> {
     let tagged_file = lofty::read_from_path(&audio_path)?;
     let file_duration_ms = tagged_file.properties().duration().as_millis() as u64;
     let bitrate = tagged_file.properties().audio_bitrate();
+    // One image, one gain: every piece of a cue sheet is the same file, so they
+    // all carry the image's values rather than inventing per-piece ones.
+    let replaygain = tagged_file
+        .primary_tag()
+        .or_else(|| tagged_file.first_tag())
+        .map(super::metadata::read_replaygain)
+        .unwrap_or_default();
 
     let cover_art = tagged_file
         .primary_tag()
@@ -113,6 +120,7 @@ pub fn process_cue_file(cue_path: &Path) -> anyhow::Result<Vec<ScannedTrack>> {
 
         tracks.push(ScannedTrack {
             path: audio_path.clone(),
+            replaygain,
             title,
             artist_names,
             album_artist_names,

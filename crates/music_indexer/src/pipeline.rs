@@ -43,7 +43,10 @@ const PROGRESS_INTERVAL: usize = 10;
 /// indexer's behavior changed while the input bytes did not. Bump this whenever
 /// a fix changes the tracks produced from the same files (e.g. the Windows-1252
 /// CUE decoding fix), and every existing library reindexes once on next launch.
-const INDEXER_FORMAT_VERSION: u32 = 6;
+// 7: ReplayGain/R128 tags are read into `track_gain`. The files did not change,
+// but what is produced from them did — without this every existing library
+// would keep the empty table until somebody rebuilt it by hand.
+const INDEXER_FORMAT_VERSION: u32 = 7;
 
 enum WorkItem {
     Audio(PathBuf),

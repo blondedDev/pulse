@@ -658,6 +658,7 @@ fn apply_remote_command(cx: &mut App, command: pulse_remote::Command) {
         } => queue_album_track(cx, album_id, track_id),
         pulse_remote::Command::PlayAllTrack { track_id } => play_all_track(cx, track_id),
         pulse_remote::Command::QueueAllTrack { track_id } => queue_all_track(cx, track_id),
+        pulse_remote::Command::PlayNextTrack { track_id } => play_next_track(cx, track_id),
     }
 }
 
@@ -879,6 +880,18 @@ fn queue_all_track(cx: &mut App, track_id: i64) {
         .find(|t| t.id == track_id);
     if let Some(track) = track {
         crate::track_list::append_tracks_to_queue(vec![Rc::new(track)], cx);
+    }
+}
+
+fn play_next_track(cx: &mut App, track_id: i64) {
+    let track = cx
+        .global::<Services>()
+        .library
+        .all_tracks()
+        .into_iter()
+        .find(|t| t.id == track_id);
+    if let Some(track) = track {
+        crate::track_list::play_tracks_next(vec![Rc::new(track)], cx);
     }
 }
 

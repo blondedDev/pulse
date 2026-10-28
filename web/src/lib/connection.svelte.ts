@@ -137,6 +137,7 @@ type Cmd =
   | { cmd: "queue_album"; album_id: number }
   | { cmd: "play_album_track"; album_id: number; track_id: number }
   | { cmd: "queue_album_track"; album_id: number; track_id: number }
+  | { cmd: "play_next_track"; track_id: number }
   | { cmd: "play_all_track"; track_id: number }
   | { cmd: "queue_all_track"; track_id: number };
 
@@ -441,6 +442,10 @@ export class Remote {
 
   queueAlbumTrack(albumId: number, trackId: number) {
     this.#send({ cmd: "queue_album_track", album_id: albumId, track_id: trackId });
+  }
+
+  playNextTrack(trackId: number) {
+    this.#send({ cmd: "play_next_track", track_id: trackId });
   }
 
   playAllTrack(trackId: number) {

@@ -245,6 +245,7 @@
           {track}
           onplay={() => playTrack(track.id)}
           onqueue={() => queueTrack(track.id, track.title)}
+          albumId={detail.id}
         />
       {/each}
     {/if}

@@ -8,7 +8,7 @@ mod assets;
 mod http;
 
 pub const DEFAULT_PORT: u16 = 8770;
-pub const PROTOCOL_VERSION: u32 = 6;
+pub const PROTOCOL_VERSION: u32 = 7;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CoverSize {
@@ -305,6 +305,12 @@ pub enum Command {
         track_id: i64,
     },
     QueueAllTrack {
+        track_id: i64,
+    },
+    /// Insert the track right after the current one rather than at the end.
+    /// The id alone is enough: the queue holds resolved tracks, so which folder
+    /// row it came from does not change what plays.
+    PlayNextTrack {
         track_id: i64,
     },
 }

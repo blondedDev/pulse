@@ -1,16 +1,20 @@
 <script lang="ts">
   import { Remote, formatTime, type PlaylistTrack } from "./connection.svelte";
+  import { longpress } from "./longpress";
+  import { openTrackSheet } from "./track_actions.svelte";
 
   let {
     remote,
     track,
     onplay,
     onqueue,
+    albumId = null,
   }: {
     remote: Remote;
     track: PlaylistTrack;
     onplay: () => void;
     onqueue: () => void;
+    albumId?: number | null;
   } = $props();
 
   const active = $derived(track.id === remote.currentTrackId);
@@ -20,6 +24,14 @@
   class={`group flex w-full items-center rounded-xl transition hover:bg-white/5 ${
     active ? "bg-white/10" : ""
   }`}
+  use:longpress={() =>
+    openTrackSheet({
+      id: track.id,
+      title: track.title,
+      artist: track.artist,
+      coverId: track.cover_id,
+      albumId,
+    })}
 >
   <button
     class="flex min-w-0 flex-1 items-center gap-3 py-2 pl-3 pr-2 text-left"

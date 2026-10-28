@@ -5,6 +5,9 @@
   import ArtistBrowser from "./lib/ArtistBrowser.svelte";
   import PlaylistBrowser from "./lib/PlaylistBrowser.svelte";
   import VolumeControl from "./lib/VolumeControl.svelte";
+  import TrackActions from "./lib/TrackActions.svelte";
+  import { longpress } from "./lib/longpress";
+  import { openTrackSheet } from "./lib/track_actions.svelte";
 
   const remote = new Remote();
 
@@ -18,6 +21,24 @@
   let paneName = $state("");
   let paneHasPartial = $state(false);
   let paneFull = $state(false);
+
+  /// What the library should open when it appears, set by the track sheet's
+  /// "go to artist"/"go to album" actions.
+  let libraryTarget = $state<
+    { kind: "artist"; name: string } | { kind: "album"; id: number } | null
+  >(null);
+
+  function goToArtist(name: string) {
+    showQueue = false;
+    libraryTarget = { kind: "artist", name };
+    showLibrary = true;
+  }
+
+  function goToAlbum(id: number) {
+    showQueue = false;
+    libraryTarget = { kind: "album", id };
+    showLibrary = true;
+  }
 
   let plBrowser = $state<PlaylistBrowser | null>(null);
   let plInDetail = $state(false);
@@ -60,6 +81,14 @@
         class={`group flex items-center gap-2 rounded-xl pl-3 pr-2 transition ${
           i === remote.queueIndex ? "bg-white/10" : "hover:bg-white/5"
         }`}
+        use:longpress={() =>
+          openTrackSheet({
+            id: item.id,
+            title: item.title,
+            artist: item.artist,
+            coverId: item.cover_id,
+            albumId: null,
+          })}
       >
         <button
           class="flex min-w-0 flex-1 items-center gap-3 py-2 text-left transition active:scale-[0.99]"
@@ -453,6 +482,13 @@
   {/if}
 
   {#if showLibrary}
-    <Library {remote} onclose={() => (showLibrary = false)} />
+    <Library
+      {remote}
+      onclose={() => (showLibrary = false)}
+      target={libraryTarget}
+      ontarget={() => (libraryTarget = null)}
+    />
   {/if}
+
+  <TrackActions {remote} onartist={goToArtist} onalbum={goToAlbum} />
 </div>

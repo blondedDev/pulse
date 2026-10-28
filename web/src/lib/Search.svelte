@@ -1,5 +1,7 @@
 <script lang="ts">
   import { untrack } from "svelte";
+  import { longpress } from "./longpress";
+  import { openTrackSheet } from "./track_actions.svelte";
   import {
     Remote,
     type AlbumEntry,
@@ -221,7 +223,17 @@
       {#if trackHits.length > 0}
         {@render sectionTitle("Tracks", trackHits.length, Math.min(trackHits.length, TRACK_LIMIT))}
         {#each trackHits.slice(0, TRACK_LIMIT) as track (track.id)}
-          <div class="group flex items-center gap-2 rounded-xl pl-3 pr-2 transition hover:bg-white/5">
+          <div
+            class="group flex items-center gap-2 rounded-xl pl-3 pr-2 transition hover:bg-white/5"
+            use:longpress={() =>
+              openTrackSheet({
+                id: track.id,
+                title: track.title,
+                artist: track.artist,
+                coverId: track.cover_id,
+                albumId: null,
+              })}
+          >
             <button
               class="flex min-w-0 flex-1 items-center gap-3 py-2 text-left transition active:scale-[0.99]"
               onclick={() => playTrack(track)}

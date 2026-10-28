@@ -1,6 +1,8 @@
 <script lang="ts">
   import { untrack } from "svelte";
   import { fade } from "svelte/transition";
+  import { longpress } from "./longpress";
+  import { openTrackSheet } from "./track_actions.svelte";
   import {
     Remote,
     formatTime,
@@ -116,6 +118,13 @@
     viewing = true;
     loadDetail(artist.id, false);
     listEl?.scrollTo(0, 0);
+  }
+
+  /// Open by name, for a track sheet that only knows the artist's name.
+  export async function openByName(name: string) {
+    if (artists === null) await loadArtists();
+    const found = artists?.find((artist) => artist.name === name);
+    if (found !== undefined) openArtist(found);
   }
 
   /// Open by id, for search results that only carry the id.
@@ -284,6 +293,14 @@
                 class={`group flex w-full items-center rounded-xl transition hover:bg-white/5 ${
                   row.track.id === remote.currentTrackId ? "bg-white/10" : ""
                 }`}
+                use:longpress={() =>
+                  openTrackSheet({
+                    id: row.track.id,
+                    title: row.track.title,
+                    artist: detail?.name ?? null,
+                    coverId: album.cover_id,
+                    albumId: album.album_id,
+                  })}
               >
                 <button
                   class="flex min-w-0 flex-1 items-center gap-3 py-2 pl-3 pr-2 text-left"

@@ -8,7 +8,17 @@
   import AlbumBrowser from "./AlbumBrowser.svelte";
   import Search from "./Search.svelte";
 
-  let { remote, onclose }: { remote: Remote; onclose: () => void } = $props();
+  let {
+    remote,
+    onclose,
+    target = null,
+    ontarget = () => {},
+  }: {
+    remote: Remote;
+    onclose: () => void;
+    target?: { kind: "artist"; name: string } | { kind: "album"; id: number } | null;
+    ontarget?: () => void;
+  } = $props();
 
   let tab = $state<"artists" | "albums" | "folders" | "all" | "playlists">("artists");
   let searching = $state(false);
@@ -76,6 +86,22 @@
               : "Playlists"
             : tabTitle,
   );
+
+  // The track sheet asked for a specific artist or album. Wait a tick so the
+  // browser components are mounted, then hand the request over.
+  $effect(() => {
+    const request = target;
+    if (request === null) return;
+    closeSearch();
+    if (request.kind === "artist") {
+      tab = "artists";
+      queueMicrotask(() => artistBrowser?.openByName(request.name));
+    } else {
+      tab = "albums";
+      queueMicrotask(() => albumBrowser?.openById(request.id));
+    }
+    ontarget();
+  });
 
   function openSearch() {
     searching = true;

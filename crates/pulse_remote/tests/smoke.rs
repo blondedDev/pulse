@@ -114,6 +114,31 @@ impl pulse_remote::LibraryReader for TestLibrary {
     fn all_tracks(&self) -> Vec<pulse_remote::PlaylistTrack> {
         vec![smoke_track()]
     }
+
+    fn albums(&self) -> Vec<pulse_remote::AlbumEntry> {
+        vec![pulse_remote::AlbumEntry {
+            id: 7,
+            title: "Smoke Album".into(),
+            artist: Some("Smoke Artist".into()),
+            year: Some(2022),
+            cover_id: Some(7),
+            track_count: 1,
+        }]
+    }
+
+    fn album(&self, album_id: i64) -> Option<pulse_remote::AlbumDetail> {
+        if album_id != 7 {
+            return None;
+        }
+        Some(pulse_remote::AlbumDetail {
+            id: 7,
+            title: "Smoke Album".into(),
+            artist: Some("Smoke Artist".into()),
+            year: Some(2022),
+            cover_id: Some(7),
+            tracks: vec![smoke_track()],
+        })
+    }
 }
 
 fn smoke_track() -> pulse_remote::PlaylistTrack {
@@ -196,6 +221,14 @@ fn serves_state_snapshot() {
 
     let tracks = try_get(addr, "/api/tracks").expect("tracks endpoint");
     assert!(tracks.contains("Smoke Track"), "tracks: {tracks}");
+
+    let albums = try_get(addr, "/api/albums").expect("albums endpoint");
+    assert!(albums.contains("Smoke Album"), "albums: {albums}");
+    assert!(albums.contains("\"track_count\":1"), "albums: {albums}");
+
+    let album = try_get(addr, "/api/album?id=7").expect("album endpoint");
+    assert!(album.contains("Smoke Track"), "album: {album}");
+    assert!(try_get(addr, "/api/album?id=8").is_none(), "unknown album must 404");
 }
 
 fn wait_for_state(addr: SocketAddr) -> String {

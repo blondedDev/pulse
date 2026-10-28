@@ -646,6 +646,16 @@ fn apply_remote_command(cx: &mut App, command: pulse_remote::Command) {
             file,
         } => queue_folder_track(cx, &path, track_id, file.as_deref()),
         pulse_remote::Command::QueueFolder { path } => queue_folder(cx, &path),
+        pulse_remote::Command::PlayAlbum { album_id } => play_album(cx, album_id),
+        pulse_remote::Command::QueueAlbum { album_id } => queue_album(cx, album_id),
+        pulse_remote::Command::PlayAlbumTrack {
+            album_id,
+            track_id,
+        } => play_album_track(cx, album_id, track_id),
+        pulse_remote::Command::QueueAlbumTrack {
+            album_id,
+            track_id,
+        } => queue_album_track(cx, album_id, track_id),
         pulse_remote::Command::PlayAllTrack { track_id } => play_all_track(cx, track_id),
         pulse_remote::Command::QueueAllTrack { track_id } => queue_all_track(cx, track_id),
     }
@@ -727,6 +737,73 @@ fn queue_playlist_track(cx: &mut App, playlist_id: i64, track_id: i64) {
         .find(|t| t.id == track_id);
     if let Some(track) = track {
         crate::track_list::append_tracks_to_queue(vec![Rc::new(track)], cx);
+    }
+}
+
+/// The album's tracks, or nothing if the album has none left.
+fn album_tracks(cx: &App, album_id: i64) -> Vec<Rc<Track>> {
+    cx.global::<Services>()
+        .library
+        .tracks_for_album(album_id)
+        .into_iter()
+        .map(Rc::new)
+        .collect()
+}
+
+fn album_name(cx: &App, album_id: i64) -> Option<SharedString> {
+    cx.global::<Services>()
+        .library
+        .albums()
+        .into_iter()
+        .find(|album| album.id == album_id)
+        .map(|album| album.title)
+        .filter(|title| !title.is_empty())
+        .map(SharedString::from)
+}
+
+fn play_album(cx: &mut App, album_id: i64) {
+    let tracks = album_tracks(cx, album_id);
+    if tracks.is_empty() {
+        return;
+    }
+    let name = album_name(cx, album_id);
+    crate::track_list::replace_queue_and_play(
+        tracks,
+        0,
+        crate::playback_queue::QueueSource::Unknown,
+        name,
+        cx,
+    );
+}
+
+fn queue_album(cx: &mut App, album_id: i64) {
+    let tracks = album_tracks(cx, album_id);
+    if !tracks.is_empty() {
+        crate::track_list::append_tracks_to_queue(tracks, cx);
+    }
+}
+
+fn play_album_track(cx: &mut App, album_id: i64, track_id: i64) {
+    let tracks = album_tracks(cx, album_id);
+    let Some(index) = tracks.iter().position(|track| track.id == track_id) else {
+        return;
+    };
+    let name = album_name(cx, album_id);
+    crate::track_list::replace_queue_and_play(
+        tracks,
+        index,
+        crate::playback_queue::QueueSource::Unknown,
+        name,
+        cx,
+    );
+}
+
+fn queue_album_track(cx: &mut App, album_id: i64, track_id: i64) {
+    let track = album_tracks(cx, album_id)
+        .into_iter()
+        .find(|track| track.id == track_id);
+    if let Some(track) = track {
+        crate::track_list::append_tracks_to_queue(vec![track], cx);
     }
 }
 

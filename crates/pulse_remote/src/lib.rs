@@ -8,7 +8,7 @@ mod assets;
 mod http;
 
 pub const DEFAULT_PORT: u16 = 8770;
-pub const PROTOCOL_VERSION: u32 = 5;
+pub const PROTOCOL_VERSION: u32 = 6;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CoverSize {
@@ -106,6 +106,28 @@ pub struct FolderDetail {
     pub tracks: Vec<PlaylistTrack>,
 }
 
+/// One album in the grid: what a cover tile needs and nothing more.
+#[derive(Clone, serde::Serialize)]
+pub struct AlbumEntry {
+    pub id: i64,
+    pub title: String,
+    pub artist: Option<String>,
+    pub year: Option<i32>,
+    pub cover_id: Option<i64>,
+    pub track_count: i64,
+}
+
+/// An album opened, with every track it holds in display order.
+#[derive(Clone, serde::Serialize)]
+pub struct AlbumDetail {
+    pub id: i64,
+    pub title: String,
+    pub artist: Option<String>,
+    pub year: Option<i32>,
+    pub cover_id: Option<i64>,
+    pub tracks: Vec<PlaylistTrack>,
+}
+
 pub trait LibraryReader: Send + Sync + 'static {
     fn cover(&self, id: i64, size: CoverSize) -> Option<Vec<u8>>;
     fn cover_original(&self, id: i64) -> Option<(Vec<u8>, String)>;
@@ -120,6 +142,10 @@ pub trait LibraryReader: Send + Sync + 'static {
     fn folder(&self, path: &str) -> Option<FolderDetail>;
     /// The whole catalog in display order.
     fn all_tracks(&self) -> Vec<PlaylistTrack>;
+    /// Every album, in the desktop's album order.
+    fn albums(&self) -> Vec<AlbumEntry>;
+    /// One album and its tracks, or `None` if it no longer exists.
+    fn album(&self, album_id: i64) -> Option<AlbumDetail>;
 }
 
 #[derive(Clone, serde::Serialize)]
@@ -258,6 +284,22 @@ pub enum Command {
     },
     QueueFolder {
         path: String,
+    },
+    /// Replace the queue with the album and start at its first track.
+    PlayAlbum {
+        album_id: i64,
+    },
+    QueueAlbum {
+        album_id: i64,
+    },
+    /// Play one track in its album's context, so next/prev walk the album.
+    PlayAlbumTrack {
+        album_id: i64,
+        track_id: i64,
+    },
+    QueueAlbumTrack {
+        album_id: i64,
+        track_id: i64,
     },
     PlayAllTrack {
         track_id: i64,

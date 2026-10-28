@@ -94,6 +94,24 @@ export type FolderDetail = {
   tracks: PlaylistTrack[];
 };
 
+export type AlbumEntry = {
+  id: number;
+  title: string;
+  artist: string | null;
+  year: number | null;
+  cover_id: number | null;
+  track_count: number;
+};
+
+export type AlbumDetail = {
+  id: number;
+  title: string;
+  artist: string | null;
+  year: number | null;
+  cover_id: number | null;
+  tracks: PlaylistTrack[];
+};
+
 export type Status = "connecting" | "open" | "reconnecting";
 
 type Cmd =
@@ -115,6 +133,10 @@ type Cmd =
   | { cmd: "play_folder_track"; path: string; track_id: number; file?: string | null }
   | { cmd: "queue_folder_track"; path: string; track_id: number; file?: string | null }
   | { cmd: "queue_folder"; path: string }
+  | { cmd: "play_album"; album_id: number }
+  | { cmd: "queue_album"; album_id: number }
+  | { cmd: "play_album_track"; album_id: number; track_id: number }
+  | { cmd: "queue_album_track"; album_id: number; track_id: number }
   | { cmd: "play_all_track"; track_id: number }
   | { cmd: "queue_all_track"; track_id: number };
 
@@ -403,6 +425,22 @@ export class Remote {
 
   queueFolder(path: string) {
     this.#send({ cmd: "queue_folder", path });
+  }
+
+  playAlbum(albumId: number) {
+    this.#send({ cmd: "play_album", album_id: albumId });
+  }
+
+  queueAlbum(albumId: number) {
+    this.#send({ cmd: "queue_album", album_id: albumId });
+  }
+
+  playAlbumTrack(albumId: number, trackId: number) {
+    this.#send({ cmd: "play_album_track", album_id: albumId, track_id: trackId });
+  }
+
+  queueAlbumTrack(albumId: number, trackId: number) {
+    this.#send({ cmd: "queue_album_track", album_id: albumId, track_id: trackId });
   }
 
   playAllTrack(trackId: number) {

@@ -47,6 +47,15 @@
   async function refresh() {
     await loadArtists();
     if (!viewing || artists === null) return;
+    // Track by id first: a rename keeps the id, and opening from search may
+    // not have a name to match on yet.
+    const byId =
+      currentId !== null ? artists.find((a) => a.id === currentId) : undefined;
+    if (byId !== undefined) {
+      currentId = byId.id;
+      loadDetail(byId.id, full);
+      return;
+    }
     const name = detail !== null ? detail.name : pendingName;
     const same = artists.find((a) => a.name === name);
     if (same === undefined) {
@@ -107,6 +116,14 @@
     viewing = true;
     loadDetail(artist.id, false);
     listEl?.scrollTo(0, 0);
+  }
+
+  /// Open by id, for search results that only carry the id.
+  export function openById(id: number) {
+    const known = artists?.find((artist) => artist.id === id);
+    openArtist(
+      known ?? { id, name: "", track_count: 0, cover_ids: [] },
+    );
   }
 
   function retry() {

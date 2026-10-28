@@ -263,6 +263,76 @@ impl pulse_remote::LibraryReader for LibraryAccess {
         let tracks = self.repo.all_tracks().unwrap_or_default();
         to_playlist_tracks(&*self.repo, tracks)
     }
+
+    fn albums(&self) -> Vec<pulse_remote::AlbumEntry> {
+        let counts = self.repo.album_track_counts().unwrap_or_default();
+        self.repo
+            .albums()
+            .unwrap_or_default()
+            .into_iter()
+            .map(|album| pulse_remote::AlbumEntry {
+                id: album.id,
+                title: album.title,
+                artist: non_empty(album.artist_name),
+                year: album.year,
+                cover_id: album.cover_art_id,
+                track_count: counts.get(&album.id).copied().unwrap_or(0),
+            })
+            .collect()
+    }
+
+    fn album(&self, album_id: i64) -> Option<pulse_remote::AlbumDetail> {
+        let tracks = self.repo.tracks_for_album(album_id).ok()?;
+        // An album with no tracks is not browsable; `albums()` would list it
+        // from the row alone, but nothing can be played.
+        if tracks.is_empty() {
+            return None;
+        }
+        let summary = self
+            .repo
+            .albums()
+            .unwrap_or_default()
+            .into_iter()
+            .find(|album| album.id == album_id);
+        let (title, artist, year, cover_id) = match summary {
+            Some(album) => (
+                album.title,
+                non_empty(album.artist_name),
+                album.year,
+                album.cover_art_id,
+            ),
+            // The album row is gone but its tracks are not (a tag edit in
+            // flight): still openable, just without the row's metadata.
+            None => (
+                self.repo
+                    .album_title(album_id)
+                    .ok()
+                    .flatten()
+                    .unwrap_or_default(),
+                None,
+                tracks[0].year,
+                tracks[0].cover_art_id,
+            ),
+        };
+        Some(pulse_remote::AlbumDetail {
+            id: album_id,
+            title,
+            artist,
+            year,
+            cover_id,
+            tracks: to_playlist_tracks(&*self.repo, tracks),
+        })
+    }
+}
+
+/// The library stores "no artist" as an empty string; the protocol uses null so
+/// the UI can tell "unknown" from "an artist named ''".
+fn non_empty(value: String) -> Option<String> {
+    if value.trim().is_empty() {
+        None
+    } else {
+        Some(value)
+    }
 }
 
 fn to_playlist_tracks(

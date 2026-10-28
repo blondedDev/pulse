@@ -43,6 +43,8 @@ the ~5 Hz position tick does not rebuild the queue array.
 | `GET /api/cover?id=&size=small\|large\|full` | cover bytes |
 | `GET /api/artists` | artist list with up to four cover ids |
 | `GET /api/artist?id=&full=` | one artist's albums and tracks |
+| `GET /api/albums` | every album with its artist, year and track count |
+| `GET /api/album?id=` | one album and its tracks, 404 when it has none |
 | `GET /api/playlists` | playlist summaries |
 | `GET /api/playlist?id=` | one playlist's tracks |
 | `GET /api/folders?parent=` | one folder-tree level: the roots when `parent` is empty |
@@ -70,6 +72,13 @@ artist grouping, so the server never sees `LibraryService`.
   two folder commands send it back. Without it the id alone picks whichever
   row the query happened to return first. Playlists and `/api/tracks` are
   catalog rows and leave `path` out.
+- **`/api/album` 404s on an album with no tracks.** The row can exist after its
+  files are gone; the grid lists it so the count is honest, but there is nothing
+  to open, so the detail endpoint refuses rather than returning an empty page.
+- **Album commands carry the album id, not a track list.** `PlayAlbum`,
+  `QueueAlbum`, `PlayAlbumTrack` and `QueueAlbumTrack` resolve the tracks on the
+  app side, so the queue is built from the library's display order and the
+  client never has to send a list that might already be stale.
 - **`/api/tracks` is the entire catalog.** It is a few hundred kilobytes on a
   large library; the web app renders it in pages of 200 rather than all at once.
 - **No authentication.** The server binds `0.0.0.0` on the configured port and

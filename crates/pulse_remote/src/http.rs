@@ -52,6 +52,8 @@ fn build_router(state: AppState) -> Router {
         .route("/api/folders", get(folders_handler))
         .route("/api/folder", get(folder_handler))
         .route("/api/tracks", get(tracks_handler))
+        .route("/api/albums", get(albums_handler))
+        .route("/api/album", get(album_handler))
         .route("/api/command", post(command_handler))
         .route("/ws", get(ws_handler));
 
@@ -109,6 +111,25 @@ async fn cover_handler(State(state): State<AppState>, Query(query): Query<CoverQ
 
 async fn artists_handler(State(state): State<AppState>) -> impl IntoResponse {
     Json(state.library.artists())
+}
+
+async fn albums_handler(State(state): State<AppState>) -> impl IntoResponse {
+    Json(state.library.albums())
+}
+
+#[derive(serde::Deserialize)]
+struct AlbumQuery {
+    id: i64,
+}
+
+async fn album_handler(
+    State(state): State<AppState>,
+    Query(query): Query<AlbumQuery>,
+) -> Response {
+    match state.library.album(query.id) {
+        Some(detail) => Json(detail).into_response(),
+        None => StatusCode::NOT_FOUND.into_response(),
+    }
 }
 
 #[derive(serde::Deserialize)]

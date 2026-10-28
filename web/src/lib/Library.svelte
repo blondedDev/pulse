@@ -5,10 +5,15 @@
   import PlaylistBrowser from "./PlaylistBrowser.svelte";
   import FolderBrowser from "./FolderBrowser.svelte";
   import AllTracks from "./AllTracks.svelte";
+  import AlbumBrowser from "./AlbumBrowser.svelte";
+  import Search from "./Search.svelte";
 
   let { remote, onclose }: { remote: Remote; onclose: () => void } = $props();
 
-  let tab = $state<"artists" | "folders" | "all" | "playlists">("artists");
+  let tab = $state<"artists" | "albums" | "folders" | "all" | "playlists">("artists");
+  let searching = $state(false);
+  let query = $state("");
+  let searchEl = $state<HTMLInputElement | null>(null);
 
   let artistBrowser = $state<ArtistBrowser | null>(null);
   let aInDetail = $state(false);
@@ -24,24 +29,32 @@
   let fInDetail = $state(false);
   let fName = $state("");
 
+  let albumBrowser = $state<AlbumBrowser | null>(null);
+  let albInDetail = $state(false);
+  let albName = $state("");
+
   const activeInDetail = $derived(
     tab === "artists"
       ? aInDetail
-      : tab === "folders"
-        ? fInDetail
-        : tab === "playlists"
-          ? plInDetail
-          : false,
+      : tab === "albums"
+        ? albInDetail
+        : tab === "folders"
+          ? fInDetail
+          : tab === "playlists"
+            ? plInDetail
+            : false,
   );
 
   const tabTitle = $derived(
     tab === "artists"
       ? "Artists"
-      : tab === "folders"
-        ? "Folders"
-        : tab === "all"
-          ? "All tracks"
-          : "Playlists",
+      : tab === "albums"
+        ? "Albums"
+        : tab === "folders"
+          ? "Folders"
+          : tab === "all"
+            ? "All tracks"
+            : "Playlists",
   );
 
   const title = $derived(
@@ -49,22 +62,59 @@
       ? aInDetail
         ? aName
         : "Artists"
-      : tab === "folders"
-        ? fInDetail
-          ? fName
-          : "Folders"
-        : tab === "playlists"
-          ? plInDetail
-            ? plName
-            : "Playlists"
-          : tabTitle,
+      : tab === "albums"
+        ? albInDetail
+          ? albName
+          : "Albums"
+        : tab === "folders"
+          ? fInDetail
+            ? fName
+            : "Folders"
+          : tab === "playlists"
+            ? plInDetail
+              ? plName
+              : "Playlists"
+            : tabTitle,
   );
+
+  function openSearch() {
+    searching = true;
+    query = "";
+    // The field is rendered on the next tick; focus it so the keyboard comes up.
+    queueMicrotask(() => searchEl?.focus());
+  }
+
+  function closeSearch() {
+    searching = false;
+    query = "";
+  }
+
+  function openArtistFromSearch(id: number) {
+    closeSearch();
+    tab = "artists";
+    artistBrowser?.openById(id);
+  }
+
+  function openAlbumFromSearch(id: number) {
+    closeSearch();
+    tab = "albums";
+    albumBrowser?.openById(id);
+  }
 
   function goBack() {
     if (tab === "artists") artistBrowser?.goBack();
+    else if (tab === "albums") albumBrowser?.goBack();
     else if (tab === "folders") folderBrowser?.goBack();
     else if (tab === "playlists") plBrowser?.goBack();
   }
+
+  const tabs = [
+    { id: "artists", label: "Artists" },
+    { id: "albums", label: "Albums" },
+    { id: "folders", label: "Folders" },
+    { id: "all", label: "All tracks" },
+    { id: "playlists", label: "Playlists" },
+  ] as const;
 </script>
 
 <div
@@ -83,7 +133,62 @@
         </svg>
       </button>
     {/if}
-    <h2 class="min-w-0 flex-1 truncate text-base font-semibold">{title}</h2>
+    {#if searching}
+      <div class="flex min-w-0 flex-1 items-center gap-2">
+        <svg
+          class="h-4 w-4 flex-shrink-0 text-neutral-500"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+        >
+          <circle cx="11" cy="11" r="7" />
+          <path d="M20 20l-3.5-3.5" />
+        </svg>
+        <input
+          bind:this={searchEl}
+          bind:value={query}
+          type="text"
+          inputmode="search"
+          autocomplete="off"
+          autocorrect="off"
+          autocapitalize="off"
+          spellcheck="false"
+          placeholder="Artists, albums, tracks"
+          aria-label="Search library"
+          class="min-w-0 flex-1 bg-transparent text-base text-neutral-100 placeholder:text-neutral-500 focus:outline-none"
+        />
+        {#if query !== ""}
+          <button
+            class="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full text-neutral-400 transition active:scale-90 hover:bg-white/10 hover:text-white"
+            aria-label="Clear search"
+            onclick={() => {
+              query = "";
+              searchEl?.focus();
+            }}
+          >
+            <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+              <path d="M6 6l12 12M18 6L6 18" />
+            </svg>
+          </button>
+        {/if}
+      </div>
+    {:else}
+      <h2 class="min-w-0 flex-1 truncate text-base font-semibold">{title}</h2>
+      {#if !activeInDetail}
+        <button
+          class="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full text-neutral-400 transition active:scale-90 hover:bg-white/10 hover:text-white"
+          aria-label="Search"
+          onclick={openSearch}
+        >
+          <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+            <circle cx="11" cy="11" r="7" />
+            <path d="M20 20l-3.5-3.5" />
+          </svg>
+        </button>
+      {/if}
+    {/if}
     {#if tab === "artists" && aInDetail && aHasPartial}
       <button
         class={`flex h-10 flex-shrink-0 items-center gap-2 rounded-full px-4 text-xs font-medium transition active:scale-95 ${
@@ -98,51 +203,48 @@
         Full albums
       </button>
     {/if}
-    <button
-      class="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full text-neutral-400 transition active:scale-90 hover:bg-white/10 hover:text-white"
-      aria-label="Close"
-      onclick={onclose}
-    >
-      <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
-        <path d="M6 6l12 12M18 6L6 18" />
-      </svg>
-    </button>
+    {#if searching}
+      <button
+        class="h-10 flex-shrink-0 rounded-full px-2 text-sm font-medium text-neutral-300 transition active:scale-95 hover:text-white"
+        onclick={closeSearch}
+      >
+        Cancel
+      </button>
+    {:else}
+      <button
+        class="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full text-neutral-400 transition active:scale-90 hover:bg-white/10 hover:text-white"
+        aria-label="Close"
+        onclick={onclose}
+      >
+        <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+          <path d="M6 6l12 12M18 6L6 18" />
+        </svg>
+      </button>
+    {/if}
   </header>
 
+  {#if searching}
+    <Search
+      {remote}
+      {query}
+      onartist={openArtistFromSearch}
+      onalbum={openAlbumFromSearch}
+    />
+  {:else}
   {#if !activeInDetail}
-    <div class="flex items-center gap-1 border-b border-white/10 px-3 py-2">
-      <button
-        class={`flex-shrink-0 rounded-full px-3 py-1.5 text-sm font-semibold tracking-wide transition ${
-          tab === "artists" ? "bg-white/10 text-white" : "text-neutral-400 hover:text-neutral-200"
-        }`}
-        onclick={() => (tab = "artists")}
-      >
-        Artists
-      </button>
-      <button
-        class={`flex-shrink-0 rounded-full px-3 py-1.5 text-sm font-semibold tracking-wide transition ${
-          tab === "folders" ? "bg-white/10 text-white" : "text-neutral-400 hover:text-neutral-200"
-        }`}
-        onclick={() => (tab = "folders")}
-      >
-        Folders
-      </button>
-      <button
-        class={`flex-shrink-0 rounded-full px-3 py-1.5 text-sm font-semibold tracking-wide transition ${
-          tab === "all" ? "bg-white/10 text-white" : "text-neutral-400 hover:text-neutral-200"
-        }`}
-        onclick={() => (tab = "all")}
-      >
-        All tracks
-      </button>
-      <button
-        class={`flex-shrink-0 rounded-full px-3 py-1.5 text-sm font-semibold tracking-wide transition ${
-          tab === "playlists" ? "bg-white/10 text-white" : "text-neutral-400 hover:text-neutral-200"
-        }`}
-        onclick={() => (tab = "playlists")}
-      >
-        Playlists
-      </button>
+    <div
+      class="flex items-center gap-1 overflow-x-auto border-b border-white/10 px-3 py-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+    >
+      {#each tabs as entry (entry.id)}
+        <button
+          class={`flex-shrink-0 rounded-full px-3 py-1.5 text-sm font-semibold tracking-wide transition ${
+            tab === entry.id ? "bg-white/10 text-white" : "text-neutral-400 hover:text-neutral-200"
+          }`}
+          onclick={() => (tab = entry.id)}
+        >
+          {entry.label}
+        </button>
+      {/each}
     </div>
   {/if}
 
@@ -154,6 +256,14 @@
       bind:detailName={aName}
       bind:detailHasPartial={aHasPartial}
       bind:detailFull={aFull}
+    />
+  </div>
+  <div class={`min-h-0 flex-1 flex-col ${tab === "albums" ? "flex" : "hidden"}`}>
+    <AlbumBrowser
+      bind:this={albumBrowser}
+      {remote}
+      bind:inDetail={albInDetail}
+      bind:detailName={albName}
     />
   </div>
   <div class={`min-h-0 flex-1 flex-col ${tab === "folders" ? "flex" : "hidden"}`}>
@@ -175,4 +285,5 @@
       bind:detailName={plName}
     />
   </div>
+  {/if}
 </div>

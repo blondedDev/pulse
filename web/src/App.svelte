@@ -12,6 +12,10 @@
   const remote = new Remote();
 
   let showQueue = $state(false);
+  let queueEditing = $state(false);
+  let queueDrag = $state<
+    { from: number; startY: number; dy: number; height: number } | null
+  >(null);
   let showLibrary = $state(false);
   let showPanel = $state(true);
   let desktopTab = $state<"queue" | "artists" | "playlists">("queue");
@@ -27,6 +31,55 @@
   let libraryTarget = $state<
     { kind: "artist"; name: string } | { kind: "album"; id: number } | null
   >(null);
+
+  function closeQueue() {
+    showQueue = false;
+    queueEditing = false;
+    queueDrag = null;
+  }
+
+  function startQueueDrag(event: PointerEvent, index: number) {
+    const handle = event.currentTarget as HTMLElement;
+    const row = handle.closest("[data-queue-row]") as HTMLElement | null;
+    if (row === null) return;
+    handle.setPointerCapture(event.pointerId);
+    queueDrag = {
+      from: index,
+      startY: event.clientY,
+      dy: 0,
+      height: row.offsetHeight,
+    };
+  }
+
+  function moveQueueDrag(event: PointerEvent) {
+    if (queueDrag === null) return;
+    queueDrag.dy = event.clientY - queueDrag.startY;
+  }
+
+  function endQueueDrag(event: PointerEvent) {
+    const drag = queueDrag;
+    queueDrag = null;
+    if (drag === null) return;
+    const handle = event.currentTarget as HTMLElement;
+    if (handle.hasPointerCapture(event.pointerId)) {
+      handle.releasePointerCapture(event.pointerId);
+    }
+    // One command on release: the queue comes back over the socket, so live
+    // reordering would fight the server's copy.
+    const steps = Math.round(drag.dy / drag.height);
+    if (steps === 0) return;
+    const to = Math.min(
+      remote.queue.length - 1,
+      Math.max(0, drag.from + steps),
+    );
+    if (to !== drag.from) remote.moveAt(drag.from, to);
+  }
+
+  function clearQueue() {
+    remote.clearQueue();
+    queueEditing = false;
+    queueDrag = null;
+  }
 
   function goToArtist(name: string) {
     showQueue = false;
@@ -77,10 +130,16 @@
     <p class="px-3 py-8 text-center text-sm text-neutral-500">Queue is empty</p>
   {:else}
     {#each remote.queue as item, i (i)}
+      {@const editing = variant === "mobile" && queueEditing}
+      {@const dragging = queueDrag?.from === i}
       <div
-        class={`group flex items-center gap-2 rounded-xl pl-3 pr-2 transition ${
-          i === remote.queueIndex ? "bg-white/10" : "hover:bg-white/5"
+        data-queue-row
+        class={`group flex items-center gap-2 rounded-xl pr-2 transition ${
+          editing ? "" : "pl-3"
+        } ${i === remote.queueIndex ? "bg-white/10" : "hover:bg-white/5"} ${
+          dragging ? "relative z-10 bg-neutral-800 shadow-xl" : ""
         }`}
+        style={dragging ? `transform: translateY(${queueDrag?.dy ?? 0}px)` : ""}
         use:longpress={() =>
           openTrackSheet({
             id: item.id,
@@ -90,11 +149,31 @@
             albumId: null,
           })}
       >
+        {#if editing}
+          <button
+            class="flex h-11 w-9 flex-shrink-0 touch-none items-center justify-center text-neutral-500 transition active:scale-95 hover:text-neutral-300"
+            aria-label={`Reorder ${item.title}`}
+            onpointerdown={(event) => startQueueDrag(event, i)}
+            onpointermove={moveQueueDrag}
+            onpointerup={endQueueDrag}
+            onpointercancel={endQueueDrag}
+          >
+            <svg class="h-5 w-5" viewBox="0 0 24 24" fill="currentColor">
+              <circle cx="9" cy="7" r="1.6" />
+              <circle cx="15" cy="7" r="1.6" />
+              <circle cx="9" cy="12" r="1.6" />
+              <circle cx="15" cy="12" r="1.6" />
+              <circle cx="9" cy="17" r="1.6" />
+              <circle cx="15" cy="17" r="1.6" />
+            </svg>
+          </button>
+        {/if}
         <button
           class="flex min-w-0 flex-1 items-center gap-3 py-2 text-left transition active:scale-[0.99]"
           onclick={() => {
+            if (editing) return;
             remote.playAt(i);
-            showQueue = false;
+            closeQueue();
           }}
         >
           <div class="h-11 w-11 flex-shrink-0 overflow-hidden rounded-md bg-neutral-800">
@@ -119,7 +198,7 @@
             {/if}
           </div>
         </button>
-        {#if i === remote.queueIndex}
+        {#if i === remote.queueIndex && !editing}
           <svg class="h-4 w-4 flex-shrink-0 text-emerald-400" viewBox="0 0 24 24" fill="currentColor">
             <path d="M8 5v14l11-7z" />
           </svg>
@@ -456,18 +535,39 @@
       class="absolute inset-0 z-20 cursor-default bg-black/50 lg:hidden"
       aria-label="Close queue"
       transition:fade={{ duration: 150 }}
-      onclick={() => (showQueue = false)}
+      onclick={closeQueue}
     ></button>
     <section
       class="absolute inset-x-0 bottom-0 z-30 flex max-h-[80dvh] flex-col rounded-t-3xl border-t border-white/10 bg-neutral-900 shadow-2xl lg:hidden"
       transition:fly={{ y: 500, duration: 250 }}
     >
-      <div class="flex items-center justify-between px-5 py-4">
-        <h2 class="text-sm font-semibold tracking-wide text-neutral-300">Queue</h2>
+      <div class="flex items-center gap-2 px-5 py-4">
+        <h2 class="min-w-0 flex-1 truncate text-sm font-semibold tracking-wide text-neutral-300">
+          Queue
+          {#if remote.queue.length > 0}
+            <span class="ml-1 font-normal text-neutral-500">{remote.queue.length}</span>
+          {/if}
+        </h2>
+        {#if remote.queue.length > 0}
+          <button
+            class="flex-shrink-0 rounded-full px-2.5 py-1 text-xs font-medium text-neutral-400 transition active:scale-95 hover:bg-white/10 hover:text-white"
+            onclick={clearQueue}
+          >
+            Clear
+          </button>
+          <button
+            class={`flex-shrink-0 rounded-full px-2.5 py-1 text-xs font-medium transition active:scale-95 ${
+              queueEditing ? "bg-white/10 text-white" : "text-neutral-400 hover:bg-white/10 hover:text-white"
+            }`}
+            onclick={() => (queueEditing = !queueEditing)}
+          >
+            {queueEditing ? "Done" : "Edit"}
+          </button>
+        {/if}
         <button
-          class="text-neutral-400 transition active:scale-90 hover:text-white"
+          class="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full text-neutral-400 transition active:scale-90 hover:text-white"
           aria-label="Close"
-          onclick={() => (showQueue = false)}
+          onclick={closeQueue}
         >
           <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
             <path d="M6 6l12 12M18 6L6 18" />

@@ -121,6 +121,8 @@ type Cmd =
   | { cmd: "seek"; position_ms: number }
   | { cmd: "play_at"; index: number }
   | { cmd: "remove_at"; index: number }
+  | { cmd: "move_at"; from: number; to: number }
+  | { cmd: "clear_queue" }
   | { cmd: "set_shuffle"; on: boolean }
   | { cmd: "set_repeat"; mode: RepeatMode }
   | { cmd: "set_volume"; volume: number }
@@ -272,6 +274,14 @@ export class Remote {
   playAt(index: number) {
     this.queueIndex = index;
     this.#send({ cmd: "play_at", index });
+  }
+
+  moveAt(from: number, to: number) {
+    this.#send({ cmd: "move_at", from, to });
+  }
+
+  clearQueue() {
+    this.#send({ cmd: "clear_queue" });
   }
 
   removeAt(index: number) {

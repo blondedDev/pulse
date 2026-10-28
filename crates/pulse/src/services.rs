@@ -597,6 +597,24 @@ fn remove_queue_index(cx: &mut App, index: usize) {
     queue_mutated(cx);
 }
 
+fn move_queue_index(cx: &mut App, from: usize, to: usize) {
+    cx.global::<Services>()
+        .playback_queue
+        .borrow_mut()
+        .move_track(from, to);
+    queue_mutated(cx);
+}
+
+/// The same thing the desktop's trash button does: drop the queue, stop, and
+/// tell every client.
+fn clear_queue(cx: &mut App) {
+    let services = cx.global::<Services>();
+    services.playback_queue.borrow_mut().clear();
+    services.current_position_ms.store(0, Ordering::Relaxed);
+    services.stop_playback();
+    queue_mutated(cx);
+}
+
 fn apply_remote_command(cx: &mut App, command: pulse_remote::Command) {
     match command {
         pulse_remote::Command::PlayPause => {
@@ -607,6 +625,8 @@ fn apply_remote_command(cx: &mut App, command: pulse_remote::Command) {
         pulse_remote::Command::Seek { position_ms } => seek_to_ms(cx, position_ms),
         pulse_remote::Command::PlayAt { index } => play_queue_index(cx, index),
         pulse_remote::Command::RemoveAt { index } => remove_queue_index(cx, index),
+        pulse_remote::Command::MoveAt { from, to } => move_queue_index(cx, from, to),
+        pulse_remote::Command::ClearQueue => clear_queue(cx),
         pulse_remote::Command::Refresh => force_publish_remote_state(cx),
         pulse_remote::Command::SetShuffle { on } => set_shuffle(cx, on),
         pulse_remote::Command::SetRepeat { mode } => set_repeat(cx, repeat_from_remote(mode)),

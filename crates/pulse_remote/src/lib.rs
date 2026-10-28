@@ -8,7 +8,7 @@ mod assets;
 mod http;
 
 pub const DEFAULT_PORT: u16 = 8770;
-pub const PROTOCOL_VERSION: u32 = 7;
+pub const PROTOCOL_VERSION: u32 = 8;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CoverSize {
@@ -233,6 +233,12 @@ pub enum Command {
     RemoveAt {
         index: usize,
     },
+    /// Move a queued track; both indices are positions in the visible order.
+    MoveAt {
+        from: usize,
+        to: usize,
+    },
+    ClearQueue,
     Refresh,
     SetShuffle {
         on: bool,

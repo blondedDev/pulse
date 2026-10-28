@@ -111,6 +111,90 @@
   {/if}
 {/snippet}
 
+{#snippet transport(where: "dock" | "desktop")}
+  <div
+    class={`flex items-center justify-center gap-5 ${
+      where === "desktop" ? "lg:justify-start lg:gap-6" : "w-full justify-between"
+    }`}
+  >
+    <button
+      class={`transition active:scale-90 hover:text-white ${remote.shuffle ? "text-emerald-400" : "text-neutral-500"}`}
+      aria-label="Shuffle"
+      onclick={() => remote.toggleShuffle()}
+    >
+      <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <polyline points="16 3 21 3 21 8" />
+        <line x1="4" y1="20" x2="21" y2="3" />
+        <polyline points="21 16 21 21 16 21" />
+        <line x1="15" y1="15" x2="21" y2="21" />
+        <line x1="4" y1="4" x2="9" y2="9" />
+      </svg>
+    </button>
+    <button
+      class="text-neutral-300 transition active:scale-90 enabled:hover:text-white disabled:opacity-30"
+      aria-label="Previous"
+      disabled={!remote.hasTrack}
+      onclick={() => remote.prev()}
+    >
+      <svg class="h-8 w-8" viewBox="0 0 24 24" fill="currentColor">
+        <path d="M6 5h2v14H6zM20 5v14L9 12z" />
+      </svg>
+    </button>
+
+    <button
+      class="flex h-14 w-14 flex-shrink-0 items-center justify-center rounded-full bg-white text-neutral-900 shadow-lg transition active:scale-90 enabled:hover:scale-105 disabled:opacity-30"
+      aria-label={remote.playing ? "Pause" : "Play"}
+      disabled={!remote.hasTrack}
+      onclick={() => remote.playPause()}
+    >
+      {#if remote.playing && remote.buffering}
+        <svg class="h-8 w-8 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
+          <path d="M12 3a9 9 0 1 0 9 9" />
+        </svg>
+      {:else if remote.playing}
+        <svg class="h-8 w-8" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M7 5h4v14H7zM13 5h4v14h-4z" />
+        </svg>
+      {:else}
+        <svg class="ml-0.5 h-8 w-8" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M8 5v14l11-7z" />
+        </svg>
+      {/if}
+    </button>
+
+    <button
+      class="text-neutral-300 transition active:scale-90 enabled:hover:text-white disabled:opacity-30"
+      aria-label="Next"
+      disabled={!remote.hasTrack}
+      onclick={() => remote.next()}
+    >
+      <svg class="h-8 w-8" viewBox="0 0 24 24" fill="currentColor">
+        <path d="M16 5h2v14h-2zM4 5l11 7-11 7z" />
+      </svg>
+    </button>
+    <button
+      class={`transition active:scale-90 hover:text-white ${remote.repeat !== "off" ? "text-emerald-400" : "text-neutral-500"}`}
+      aria-label="Repeat"
+      onclick={() => remote.cycleRepeat()}
+    >
+      <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <polyline points="17 1 21 5 17 9" />
+        <path d="M3 11V9a4 4 0 0 1 4-4h14" />
+        <polyline points="7 23 3 19 7 15" />
+        <path d="M21 13v2a4 4 0 0 1-4 4H3" />
+        {#if remote.repeat === "one"}
+          <text x="12" y="15" text-anchor="middle" font-size="8" font-weight="bold" fill="currentColor" stroke="none">1</text>
+        {/if}
+      </svg>
+    </button>
+    {#if where === "desktop"}
+      <div class="hidden lg:ml-auto lg:block">
+        <VolumeControl {remote} direction="up" />
+      </div>
+    {/if}
+  </div>
+{/snippet}
+
 <div class="relative isolate flex min-h-[100dvh] flex-col overflow-hidden bg-neutral-950 text-neutral-100 lg:h-[100dvh] lg:flex-row">
   {#if remote.coverUrl}
     <img
@@ -123,7 +207,7 @@
   {/if}
 
   <div class="relative flex min-h-0 min-w-0 flex-1 flex-col">
-  <header class="relative z-10 flex items-center justify-between gap-2 px-5 py-4">
+  <header class="relative z-10 flex items-center justify-between gap-2 px-5 py-3">
     <span class="flex min-w-0 items-center gap-2 sm:gap-3">
       <img src="/pulse.svg" alt="Pulse" class="h-6 w-6 flex-shrink-0 rounded-md" />
       <span class="hidden text-sm font-semibold tracking-wide text-neutral-300 sm:inline">Pulse</span>
@@ -134,50 +218,24 @@
         {/if}
       </span>
     </span>
-    <span class="flex flex-shrink-0 items-center gap-4 sm:gap-5">
-      <div class="lg:hidden">
-        <VolumeControl {remote} direction="down" />
-      </div>
-      <button
-        class="text-neutral-400 transition active:scale-90 hover:text-white lg:hidden"
-        aria-label="Library"
-        onclick={() => (showLibrary = true)}
-      >
-        <svg class="h-6 w-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
-          <rect x="4" y="4" width="14" height="14" rx="2" />
-          <path d="M7 21h13a1.7 1.7 0 0 0 1.7-1.7V7" />
-          <circle cx="11" cy="11" r="1.6" fill="currentColor" stroke="none" />
-        </svg>
-      </button>
-      <button
-        class="text-neutral-400 transition active:scale-90 hover:text-white lg:hidden"
-        aria-label="Queue"
-        onclick={() => (showQueue = true)}
-      >
-        <svg class="h-6 w-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
-          <path d="M4 6h12M4 12h12M4 18h8" />
-          <path d="M17 14v6l4-3z" fill="currentColor" stroke="none" />
-        </svg>
-      </button>
-      <button
-        class={`hidden transition active:scale-90 hover:text-white lg:block ${showPanel ? "text-white" : "text-neutral-500"}`}
-        aria-label={showPanel ? "Hide panel" : "Show panel"}
-        onclick={() => (showPanel = !showPanel)}
-      >
-        <svg class="h-6 w-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-          <rect x="3" y="4" width="18" height="16" rx="2" />
-          <line x1="15" y1="4" x2="15" y2="20" />
-          {#if showPanel}
-            <path d="M15 5.5h3.5A1.5 1.5 0 0 1 20 7v10a1.5 1.5 0 0 1-1.5 1.5H15z" fill="currentColor" stroke="none" />
-          {/if}
-        </svg>
-      </button>
-    </span>
+    <button
+      class={`hidden transition active:scale-90 hover:text-white lg:block ${showPanel ? "text-white" : "text-neutral-500"}`}
+      aria-label={showPanel ? "Hide panel" : "Show panel"}
+      onclick={() => (showPanel = !showPanel)}
+    >
+      <svg class="h-6 w-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="3" y="4" width="18" height="16" rx="2" />
+        <line x1="15" y1="4" x2="15" y2="20" />
+        {#if showPanel}
+          <path d="M15 5.5h3.5A1.5 1.5 0 0 1 20 7v10a1.5 1.5 0 0 1-1.5 1.5H15z" fill="currentColor" stroke="none" />
+        {/if}
+      </svg>
+    </button>
   </header>
 
-  <main class="flex min-h-0 flex-1 items-center justify-center px-6 py-10">
-    <div class="flex w-full min-w-0 max-w-sm flex-col items-center gap-8 lg:max-w-4xl lg:flex-row lg:items-center lg:gap-12 xl:max-w-5xl 2xl:gap-16">
-    <div class="aspect-square w-full overflow-hidden rounded-3xl bg-neutral-800/60 shadow-2xl ring-1 ring-white/10 lg:w-80 lg:flex-shrink-0 xl:w-96 2xl:w-[26rem]">
+  <main class="flex min-h-0 flex-1 items-center justify-center px-6 py-4 lg:py-10">
+    <div class="flex w-full min-w-0 max-w-sm flex-col items-center gap-6 lg:max-w-4xl lg:flex-row lg:items-center lg:gap-12 xl:max-w-5xl 2xl:gap-16">
+    <div class="aspect-square w-full max-w-[min(100%,20rem)] overflow-hidden rounded-3xl bg-neutral-800/60 shadow-2xl ring-1 ring-white/10 lg:max-w-none lg:w-80 lg:flex-shrink-0 xl:w-96 2xl:w-[26rem]">
       {#if remote.coverUrl}
         <img src={remote.coverUrl} alt="" class="h-full w-full object-cover" />
       {:else}
@@ -191,7 +249,7 @@
       {/if}
     </div>
 
-    <div class="flex w-full min-w-0 flex-col gap-8 lg:flex-1 lg:gap-10">
+    <div class="flex w-full min-w-0 flex-col gap-5 lg:flex-1 lg:gap-10">
     <div class="w-full min-w-0 text-center lg:text-left">
       <h1 class="truncate text-2xl font-semibold tracking-tight lg:text-3xl">
         {remote.title ?? "Nothing playing"}
@@ -227,84 +285,43 @@
       </div>
     </div>
 
-    <div class="flex items-center justify-center gap-5 lg:justify-start lg:gap-6">
-      <button
-        class={`transition active:scale-90 hover:text-white ${remote.shuffle ? "text-emerald-400" : "text-neutral-500"}`}
-        aria-label="Shuffle"
-        onclick={() => remote.toggleShuffle()}
-      >
-        <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <polyline points="16 3 21 3 21 8" />
-          <line x1="4" y1="20" x2="21" y2="3" />
-          <polyline points="21 16 21 21 16 21" />
-          <line x1="15" y1="15" x2="21" y2="21" />
-          <line x1="4" y1="4" x2="9" y2="9" />
-        </svg>
-      </button>
-      <button
-        class="text-neutral-300 transition active:scale-90 enabled:hover:text-white disabled:opacity-30"
-        aria-label="Previous"
-        disabled={!remote.hasTrack}
-        onclick={() => remote.prev()}
-      >
-        <svg class="h-8 w-8" viewBox="0 0 24 24" fill="currentColor">
-          <path d="M6 5h2v14H6zM20 5v14L9 12z" />
-        </svg>
-      </button>
-
-      <button
-        class="flex h-14 w-14 items-center justify-center rounded-full bg-white text-neutral-900 shadow-lg transition active:scale-90 enabled:hover:scale-105 disabled:opacity-30"
-        aria-label={remote.playing ? "Pause" : "Play"}
-        disabled={!remote.hasTrack}
-        onclick={() => remote.playPause()}
-      >
-        {#if remote.playing && remote.buffering}
-          <svg class="h-8 w-8 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
-            <path d="M12 3a9 9 0 1 0 9 9" />
-          </svg>
-        {:else if remote.playing}
-          <svg class="h-8 w-8" viewBox="0 0 24 24" fill="currentColor">
-            <path d="M7 5h4v14H7zM13 5h4v14h-4z" />
-          </svg>
-        {:else}
-          <svg class="ml-0.5 h-8 w-8" viewBox="0 0 24 24" fill="currentColor">
-            <path d="M8 5v14l11-7z" />
-          </svg>
-        {/if}
-      </button>
-
-      <button
-        class="text-neutral-300 transition active:scale-90 enabled:hover:text-white disabled:opacity-30"
-        aria-label="Next"
-        disabled={!remote.hasTrack}
-        onclick={() => remote.next()}
-      >
-        <svg class="h-8 w-8" viewBox="0 0 24 24" fill="currentColor">
-          <path d="M16 5h2v14h-2zM4 5l11 7-11 7z" />
-        </svg>
-      </button>
-      <button
-        class={`transition active:scale-90 hover:text-white ${remote.repeat !== "off" ? "text-emerald-400" : "text-neutral-500"}`}
-        aria-label="Repeat"
-        onclick={() => remote.cycleRepeat()}
-      >
-        <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <polyline points="17 1 21 5 17 9" />
-          <path d="M3 11V9a4 4 0 0 1 4-4h14" />
-          <polyline points="7 23 3 19 7 15" />
-          <path d="M21 13v2a4 4 0 0 1-4 4H3" />
-          {#if remote.repeat === "one"}
-            <text x="12" y="15" text-anchor="middle" font-size="8" font-weight="bold" fill="currentColor" stroke="none">1</text>
-          {/if}
-        </svg>
-      </button>
-      <div class="hidden lg:ml-auto lg:block">
-        <VolumeControl {remote} direction="up" />
-      </div>
+    <div class="hidden lg:block">
+      {@render transport("desktop")}
     </div>
     </div>
     </div>
   </main>
+
+  <footer
+    class="relative z-10 flex-shrink-0 border-t border-white/10 bg-neutral-950/80 px-4 pt-2 backdrop-blur-xl lg:hidden"
+    style="padding-bottom: max(0.75rem, env(safe-area-inset-bottom))"
+  >
+    <div class="flex items-center justify-around pb-1">
+      <button
+        class="flex h-11 w-11 items-center justify-center rounded-full text-neutral-400 transition active:scale-90 hover:text-white"
+        aria-label="Library"
+        onclick={() => (showLibrary = true)}
+      >
+        <svg class="h-6 w-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="4" y="4" width="14" height="14" rx="2" />
+          <path d="M7 21h13a1.7 1.7 0 0 0 1.7-1.7V7" />
+          <circle cx="11" cy="11" r="1.6" fill="currentColor" stroke="none" />
+        </svg>
+      </button>
+      <button
+        class="flex h-11 w-11 items-center justify-center rounded-full text-neutral-400 transition active:scale-90 hover:text-white"
+        aria-label="Queue"
+        onclick={() => (showQueue = true)}
+      >
+        <svg class="h-6 w-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+          <path d="M4 6h12M4 12h12M4 18h8" />
+          <path d="M17 14v6l4-3z" fill="currentColor" stroke="none" />
+        </svg>
+      </button>
+      <VolumeControl {remote} direction="up" />
+    </div>
+    {@render transport("dock")}
+  </footer>
   </div>
 
   <div

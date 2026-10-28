@@ -19,6 +19,15 @@
   }
 }
 
+@layer base {
+  /* Dragging an image starts a native drag, which cancels the pointer stream
+     and kills any swipe that began on it. */
+  img {
+    -webkit-user-drag: none;
+    user-select: none;
+  }
+}
+
 @layer components {
   .seek {
     -webkit-appearance: none;

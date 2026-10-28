@@ -7,6 +7,7 @@
   import VolumeControl from "./lib/VolumeControl.svelte";
   import TrackActions from "./lib/TrackActions.svelte";
   import { longpress } from "./lib/longpress";
+  import { swipe } from "./lib/swipe";
   import { openTrackSheet } from "./lib/track_actions.svelte";
 
   const remote = new Remote();
@@ -16,6 +17,11 @@
   let queueDrag = $state<
     { from: number; startY: number; dy: number; height: number } | null
   >(null);
+  let queueSwipe = $state<
+    { index: number; startX: number; startY: number; dx: number; axis: "x" | "y" | null } | null
+  >(null);
+  // A swipe that moved the row must not also count as a tap on it.
+  let queueSwipeGuard = false;
   let showLibrary = $state(false);
   let showPanel = $state(true);
   let desktopTab = $state<"queue" | "artists" | "playlists">("queue");
@@ -75,6 +81,45 @@
     if (to !== drag.from) remote.moveAt(drag.from, to);
   }
 
+  function startRowSwipe(event: PointerEvent, index: number) {
+    queueSwipeGuard = false;
+    if (queueEditing) return;
+    if (event.pointerType === "mouse" && event.button !== 0) return;
+    (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
+    queueSwipe = {
+      index,
+      startX: event.clientX,
+      startY: event.clientY,
+      dx: 0,
+      axis: null,
+    };
+  }
+
+  function moveRowSwipe(event: PointerEvent) {
+    const current = queueSwipe;
+    if (current === null) return;
+    const dx = event.clientX - current.startX;
+    const dy = event.clientY - current.startY;
+    if (current.axis === null) {
+      if (Math.hypot(dx, dy) < 12) return;
+      // Vertical gestures belong to the list, so stop watching this one.
+      if (Math.abs(dy) >= Math.abs(dx)) {
+        queueSwipe = null;
+        return;
+      }
+      current.axis = "x";
+    }
+    current.dx = Math.min(0, Math.max(-140, dx));
+  }
+
+  function endRowSwipe() {
+    const current = queueSwipe;
+    queueSwipe = null;
+    if (current === null) return;
+    if (current.dx < -8) queueSwipeGuard = true;
+    if (current.dx < -88) remote.removeAt(current.index);
+  }
+
   function clearQueue() {
     remote.clearQueue();
     queueEditing = false;
@@ -132,14 +177,30 @@
     {#each remote.queue as item, i (i)}
       {@const editing = variant === "mobile" && queueEditing}
       {@const dragging = queueDrag?.from === i}
+      {@const swipeX = queueSwipe?.index === i ? queueSwipe.dx : 0}
+      <div class="relative overflow-hidden rounded-xl">
+        {#if variant === "mobile"}
+          <div
+            class="pointer-events-none absolute inset-0 flex items-center justify-end bg-red-500/25 pr-5 text-red-300"
+            aria-hidden="true"
+          >
+            <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6" />
+            </svg>
+          </div>
+        {/if}
       <div
         data-queue-row
-        class={`group flex items-center gap-2 rounded-xl pr-2 transition ${
+        class={`group relative flex items-center gap-2 rounded-xl pr-2 transition-colors ${
           editing ? "" : "pl-3"
-        } ${i === remote.queueIndex ? "bg-white/10" : "hover:bg-white/5"} ${
-          dragging ? "relative z-10 bg-neutral-800 shadow-xl" : ""
+        } ${i === remote.queueIndex ? "bg-neutral-800" : "bg-neutral-900"} ${
+          dragging ? "z-10 bg-neutral-800 shadow-xl" : ""
         }`}
-        style={dragging ? `transform: translateY(${queueDrag?.dy ?? 0}px)` : ""}
+        style={dragging
+          ? `transform: translateY(${queueDrag?.dy ?? 0}px)`
+          : swipeX !== 0
+            ? `transform: translateX(${swipeX}px)`
+            : ""}
         use:longpress={() =>
           openTrackSheet({
             id: item.id,
@@ -151,6 +212,7 @@
       >
         {#if editing}
           <button
+            data-queue-grip
             class="flex h-11 w-9 flex-shrink-0 touch-none items-center justify-center text-neutral-500 transition active:scale-95 hover:text-neutral-300"
             aria-label={`Reorder ${item.title}`}
             onpointerdown={(event) => startQueueDrag(event, i)}
@@ -170,8 +232,16 @@
         {/if}
         <button
           class="flex min-w-0 flex-1 items-center gap-3 py-2 text-left transition active:scale-[0.99]"
+          onpointerdown={(event) => startRowSwipe(event, i)}
+          onpointermove={moveRowSwipe}
+          onpointerup={endRowSwipe}
+          onpointercancel={endRowSwipe}
           onclick={() => {
             if (editing) return;
+            if (queueSwipeGuard) {
+              queueSwipeGuard = false;
+              return;
+            }
             remote.playAt(i);
             closeQueue();
           }}
@@ -214,6 +284,7 @@
             <path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6" />
           </svg>
         </button>
+      </div>
       </div>
     {/each}
   {/if}
@@ -343,9 +414,12 @@
 
   <main class="flex min-h-0 flex-1 items-center justify-center px-6 py-4 lg:py-10">
     <div class="flex w-full min-w-0 max-w-sm flex-col items-center gap-6 lg:max-w-4xl lg:flex-row lg:items-center lg:gap-12 xl:max-w-5xl 2xl:gap-16">
-    <div class="aspect-square w-full max-w-[min(100%,20rem)] overflow-hidden rounded-3xl bg-neutral-800/60 shadow-2xl ring-1 ring-white/10 lg:max-w-none lg:w-80 lg:flex-shrink-0 xl:w-96 2xl:w-[26rem]">
+    <div
+      class="aspect-square w-full max-w-[min(100%,20rem)] overflow-hidden rounded-3xl bg-neutral-800/60 shadow-2xl ring-1 ring-white/10 lg:max-w-none lg:w-80 lg:flex-shrink-0 xl:w-96 2xl:w-[26rem]"
+      use:swipe={{ onleft: () => remote.next(), onright: () => remote.prev() }}
+    >
       {#if remote.coverUrl}
-        <img src={remote.coverUrl} alt="" class="h-full w-full object-cover" />
+        <img src={remote.coverUrl} alt="" draggable="false" class="h-full w-full object-cover" />
       {:else}
         <div class="flex h-full w-full items-center justify-center text-neutral-600">
           <svg class="h-1/3 w-1/3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
@@ -541,7 +615,10 @@
       class="absolute inset-x-0 bottom-0 z-30 flex max-h-[80dvh] flex-col rounded-t-3xl border-t border-white/10 bg-neutral-900 shadow-2xl lg:hidden"
       transition:fly={{ y: 500, duration: 250 }}
     >
-      <div class="flex items-center gap-2 px-5 py-4">
+      <div
+        class="flex items-center gap-2 px-5 py-4"
+        use:swipe={{ ondown: closeQueue, threshold: 70 }}
+      >
         <h2 class="min-w-0 flex-1 truncate text-sm font-semibold tracking-wide text-neutral-300">
           Queue
           {#if remote.queue.length > 0}

@@ -2,6 +2,7 @@
   import { fade, fly } from "svelte/transition";
   import { Remote } from "./connection.svelte";
   import { closeTrackSheet, trackSheet } from "./track_actions.svelte";
+  import { swipe } from "./swipe";
 
   let {
     remote,
@@ -59,7 +60,10 @@
     class="absolute inset-x-0 bottom-0 z-50 flex flex-col rounded-t-3xl border-t border-white/10 bg-neutral-900 pb-[max(0.75rem,env(safe-area-inset-bottom))] shadow-2xl"
     transition:fly={{ y: 400, duration: 220 }}
   >
-    <div class="flex items-center gap-3 px-5 pb-2 pt-4">
+    <div
+      class="flex items-center gap-3 px-5 pb-2 pt-4"
+      use:swipe={{ ondown: closeTrackSheet, threshold: 70 }}
+    >
       <div class="h-12 w-12 flex-shrink-0 overflow-hidden rounded-lg bg-neutral-800">
         {#if track.coverId !== null}
           <img src={remote.coverUrlFor(track.coverId)} alt="" class="h-full w-full object-cover" />

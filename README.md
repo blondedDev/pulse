@@ -30,8 +30,10 @@ embedded tags, `.lrc` sidecars or LRCLIB, with a button to save what you fetched
 priority and trashes the rest, daily rotated database backups with one-click
 restore, an integrity report, and a portable export that carries its own data.
 
-**Phone remote** — an optional web UI, embedded in the binary: queue, folders,
-playlists, artists and the whole catalog.
+**Phone remote** — an optional web UI, embedded in the binary and installable
+to a home screen: albums, artists, playlists, folders and the whole catalog,
+with search, a queue you can reorder or swipe away, and lyrics that follow
+along.
 
 ## Offline by default
 

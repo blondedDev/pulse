@@ -10,7 +10,9 @@ One library. No account. No cloud.
 
 ---
 
-<!-- screenshots -->
+<div align="center">
+  <img src="docs/screenshots/desktop.webp" alt="Pulse playing a track, cover art centred, transport along the bottom" width="100%">
+</div>
 
 ## What it does
 
@@ -28,6 +30,18 @@ and a full-screen cover view.
 and raw tag rows, followed by a rescan of exactly what changed. Lyrics from
 embedded tags, `.lrc` sidecars or LRCLIB, with a button to save what you fetched.
 
+<div align="center">
+  <img src="docs/screenshots/desktop-lyrics.webp" alt="The lyrics panel, following the song" width="70%">
+</div>
+
+**Rewind** — what you actually listened to: plays, hours, artists, albums and
+tracks over the last 90 days, all counted from your own history rather than a
+service.
+
+<div align="center">
+  <img src="docs/screenshots/rewind.webp" alt="Rewind: plays, hours and top artists for the last year" width="70%">
+</div>
+
 **Housekeeping** — a duplicate finder that keeps one copy of each song by folder
 priority and trashes the rest, daily rotated database backups with one-click
 restore, an integrity report, and a portable export that carries its own data.
@@ -40,6 +54,10 @@ An optional web UI, compiled into the binary: no separate server, no second
 database, nothing to keep in sync. It is a Svelte app served by the player
 itself, so it speaks to the same queue and the same library the desktop is
 using, and the state arrives over a socket rather than a polling loop.
+
+<div align="center">
+  <img src="docs/screenshots/phone.webp" alt="Pulse's remote UI on a phone" width="300">
+</div>
 
 Turn it on in **Settings → Online → Remote control**, then open the address that
 page shows:

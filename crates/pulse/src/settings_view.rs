@@ -645,18 +645,40 @@ fn remote_group(remote_port_input: Entity<InputState>) -> SettingGroup {
 
     // The address itself, shown rather than only opened. The whole point of
     // using the LAN address is that it can be read off this screen and typed
-    // into a phone; `localhost` would be useless for exactly that.
+    // into a phone; `localhost` would be useless for exactly that. When
+    // Tailscale is up its address goes underneath, because the phone cannot
+    // reach the LAN one once it leaves the house.
     group = group.item(
         SettingItem::new(
             tr().remote_address.clone(),
             SettingField::render(|_window, cx: &mut App| {
                 let port = cx.global::<SettingsStore>().remote_port();
-                h_flex().items_center().justify_end().child(
+                let mut column = v_flex().items_end().gap_1().child(
                     div()
                         .text_sm()
                         .text_color(Colors::muted_foreground(cx))
                         .child(crate::net::remote_url(port)),
-                )
+                );
+                if let Some(url) = crate::net::tailscale_url(port) {
+                    column = column.child(
+                        h_flex()
+                            .items_center()
+                            .gap_2()
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(Colors::muted_foreground(cx))
+                                    .child(tr().remote_address_tailscale.clone()),
+                            )
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .text_color(Colors::muted_foreground(cx))
+                                    .child(url),
+                            ),
+                    );
+                }
+                h_flex().items_center().justify_end().child(column)
             }),
         )
         .description(tr().remote_address_desc.clone()),

@@ -43,6 +43,35 @@ pub fn remote_url(port: u16) -> String {
     }
 }
 
+/// This machine's Tailscale address, or `None` when Tailscale is not up.
+///
+/// Same trick as [`lan_ipv4`]: a UDP `connect` is only a routing-table lookup.
+/// The destination is Tailscale's own service address, inside the CGNAT range
+/// the daemon routes through `tailscale0`, so a successful lookup names the
+/// address on that interface.
+///
+/// The range check is what makes this honest. Without Tailscale there is still
+/// a default route, so `connect` succeeds and reports the *LAN* address; only
+/// an answer inside `100.64.0.0/10` proves the traffic really left through the
+/// tunnel. Userspace-networking mode has no interface to name and therefore
+/// reports nothing — which is the truthful answer, since there is no address
+/// anyone could type into a phone.
+pub fn tailscale_ipv4() -> Option<Ipv4Addr> {
+    let socket = UdpSocket::bind((Ipv4Addr::UNSPECIFIED, 0)).ok()?;
+    socket.connect((Ipv4Addr::new(100, 100, 100, 100), 9)).ok()?;
+    let addr = match socket.local_addr().ok()? {
+        SocketAddr::V4(addr) => *addr.ip(),
+        _ => return None,
+    };
+    let [first, second, _, _] = addr.octets();
+    (first == 100 && (64..128).contains(&second)).then_some(addr)
+}
+
+/// The same page over Tailscale, for a phone that is not on the same Wi-Fi.
+pub fn tailscale_url(port: u16) -> Option<String> {
+    tailscale_ipv4().map(|ip| format!("http://{ip}:{port}"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -67,6 +96,22 @@ mod tests {
         if let Some(ip) = lan_ipv4() {
             assert!(!ip.is_loopback(), "{ip}");
             assert!(!ip.is_unspecified(), "{ip}");
+        }
+    }
+
+    #[test]
+    fn tailscale_address_is_only_reported_inside_the_cgnat_range() {
+        // The dangerous failure is reporting the LAN address here, which would
+        // put a URL on screen that stops working the moment the phone leaves
+        // the house.
+        if let Some(ip) = tailscale_ipv4() {
+            let [first, second, _, _] = ip.octets();
+            assert_eq!(first, 100, "{ip}");
+            assert!((64..128).contains(&second), "{ip}");
+        }
+        if let Some(url) = tailscale_url(9999) {
+            assert!(url.starts_with("http://100."), "{url}");
+            assert!(url.ends_with(":9999"), "{url}");
         }
     }
 }

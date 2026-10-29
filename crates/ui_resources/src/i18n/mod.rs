@@ -306,6 +306,7 @@ pub struct Strings {
     pub open_in_browser: SharedString,
     pub remote_address: SharedString,
     pub remote_address_desc: SharedString,
+    pub remote_address_tailscale: SharedString,
     pub play_next: SharedString,
     pub playing_next_t: SharedString,
     pub backups: SharedString,

@@ -6,6 +6,7 @@
   import PlaylistBrowser from "./lib/PlaylistBrowser.svelte";
   import VolumeControl from "./lib/VolumeControl.svelte";
   import TrackActions from "./lib/TrackActions.svelte";
+  import Lyrics from "./lib/Lyrics.svelte";
   import { longpress } from "./lib/longpress";
   import { swipe } from "./lib/swipe";
   import { openTrackSheet } from "./lib/track_actions.svelte";
@@ -23,6 +24,7 @@
   // A swipe that moved the row must not also count as a tap on it.
   let queueSwipeGuard = false;
   let showLibrary = $state(false);
+  let showLyrics = $state(false);
   let showPanel = $state(true);
   let desktopTab = $state<"queue" | "artists" | "playlists">("queue");
 
@@ -500,6 +502,17 @@
           <path d="M17 14v6l4-3z" fill="currentColor" stroke="none" />
         </svg>
       </button>
+      <button
+        class="flex h-11 w-11 items-center justify-center rounded-full text-neutral-400 transition active:scale-90 hover:text-white"
+        aria-label="Lyrics"
+        onclick={() => (showLyrics = true)}
+      >
+        <svg class="h-6 w-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="9" y="2" width="6" height="11" rx="3" />
+          <path d="M5 11a7 7 0 0 0 14 0" />
+          <path d="M12 18v4" />
+        </svg>
+      </button>
       <VolumeControl {remote} direction="up" />
     </div>
     {@render transport("dock")}
@@ -665,6 +678,10 @@
       target={libraryTarget}
       ontarget={() => (libraryTarget = null)}
     />
+  {/if}
+
+  {#if showLyrics}
+    <Lyrics {remote} onclose={() => (showLyrics = false)} />
   {/if}
 
   <TrackActions {remote} onartist={goToArtist} onalbum={goToAlbum} />

@@ -45,6 +45,7 @@ the ~5 Hz position tick does not rebuild the queue array.
 | `GET /api/artist?id=&full=` | one artist's albums and tracks |
 | `GET /api/albums` | every album with its artist, year and track count |
 | `GET /api/album?id=` | one album and its tracks, 404 when it has none |
+| `GET /api/lyrics?track_id=` | that track's stored lyrics, empty when it has none |
 | `GET /api/playlists` | playlist summaries |
 | `GET /api/playlist?id=` | one playlist's tracks |
 | `GET /api/folders?parent=` | one folder-tree level: the roots when `parent` is empty |
@@ -81,6 +82,15 @@ artist grouping, so the server never sees `LibraryService`.
   client never has to send a list that might already be stale.
 - **`/api/tracks` is the entire catalog.** It is a few hundred kilobytes on a
   large library; the web app renders it in pages of 200 rather than all at once.
+- **Lyrics are read locally, fetched by command.** `/api/lyrics` only reports
+  what is already stored: `source: null` means the track has nothing, which is
+  different from having empty lyrics. `FetchLyrics` asks the app to look the
+  track up on LRCLIB; there is no reply, the result arrives as a `library_rev`
+  bump so every client refreshes the same way it does after a scan.
+- **The remote picks lyrics without the desktop's preference.** `pick` is called
+  with `prefer_lrclib = false`, so the phone shows the sidecar, then embedded,
+  then the online copy. The setting lives in the app's settings, which the
+  remote's `LibraryReader` implementation does not reach.
 - **No authentication.** The server binds `0.0.0.0` on the configured port and
   trusts the network it is on. That is the documented model; do not expose the
   port beyond a LAN you control.

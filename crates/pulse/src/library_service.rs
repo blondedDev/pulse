@@ -281,6 +281,29 @@ impl pulse_remote::LibraryReader for LibraryAccess {
             .collect()
     }
 
+    fn lyrics(&self, track_id: i64) -> pulse_remote::TrackLyrics {
+        let variants = self.repo.lyrics_variants(track_id).unwrap_or_default();
+        // The desktop's preference setting is not reachable from here, so the
+        // phone gets the default order: sidecar, embedded, then the online
+        // copy. All three are the same song's words.
+        let Some(picked) = music_library::lyrics_source::pick(&variants, false, None) else {
+            return pulse_remote::TrackLyrics::default();
+        };
+        let parsed = lyrics::parse_lrc(&picked.text);
+        pulse_remote::TrackLyrics {
+            source: Some(picked.source.clone()),
+            synced: parsed.synced,
+            lines: parsed
+                .lines
+                .into_iter()
+                .map(|line| pulse_remote::LyricLine {
+                    time_ms: line.time_ms,
+                    text: line.text,
+                })
+                .collect(),
+        }
+    }
+
     fn album(&self, album_id: i64) -> Option<pulse_remote::AlbumDetail> {
         let tracks = self.repo.tracks_for_album(album_id).ok()?;
         // An album with no tracks is not browsable; `albums()` would list it

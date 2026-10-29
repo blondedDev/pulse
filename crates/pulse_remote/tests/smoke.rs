@@ -139,6 +139,26 @@ impl pulse_remote::LibraryReader for TestLibrary {
             tracks: vec![smoke_track()],
         })
     }
+
+    fn lyrics(&self, track_id: i64) -> pulse_remote::TrackLyrics {
+        if track_id != 11 {
+            return pulse_remote::TrackLyrics::default();
+        }
+        pulse_remote::TrackLyrics {
+            source: Some("lrclib".into()),
+            synced: true,
+            lines: vec![
+                pulse_remote::LyricLine {
+                    time_ms: Some(0),
+                    text: "Smoke line one".into(),
+                },
+                pulse_remote::LyricLine {
+                    time_ms: Some(1500),
+                    text: "Smoke line two".into(),
+                },
+            ],
+        }
+    }
 }
 
 fn smoke_track() -> pulse_remote::PlaylistTrack {
@@ -229,6 +249,14 @@ fn serves_state_snapshot() {
     let album = try_get(addr, "/api/album?id=7").expect("album endpoint");
     assert!(album.contains("Smoke Track"), "album: {album}");
     assert!(try_get(addr, "/api/album?id=8").is_none(), "unknown album must 404");
+
+    let lyrics = try_get(addr, "/api/lyrics?track_id=11").expect("lyrics endpoint");
+    assert!(lyrics.contains("\"synced\":true"), "lyrics: {lyrics}");
+    assert!(lyrics.contains("\"time_ms\":1500"), "lyrics: {lyrics}");
+    assert!(lyrics.contains("Smoke line two"), "lyrics: {lyrics}");
+    let no_lyrics = try_get(addr, "/api/lyrics?track_id=12").expect("lyrics endpoint");
+    assert!(no_lyrics.contains("\"source\":null"), "lyrics: {no_lyrics}");
+    assert!(no_lyrics.contains("\"lines\":[]"), "lyrics: {no_lyrics}");
 }
 
 fn wait_for_state(addr: SocketAddr) -> String {

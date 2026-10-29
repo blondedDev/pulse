@@ -112,6 +112,19 @@ export type AlbumDetail = {
   tracks: PlaylistTrack[];
 };
 
+export type LyricLine = {
+  /// Only set on synced lyrics.
+  time_ms: number | null;
+  text: string;
+};
+
+export type TrackLyrics = {
+  /// `null` when the track has nothing stored at all.
+  source: string | null;
+  synced: boolean;
+  lines: LyricLine[];
+};
+
 export type Status = "connecting" | "open" | "reconnecting";
 
 type Cmd =
@@ -141,7 +154,8 @@ type Cmd =
   | { cmd: "queue_album_track"; album_id: number; track_id: number }
   | { cmd: "play_next_track"; track_id: number }
   | { cmd: "play_all_track"; track_id: number }
-  | { cmd: "queue_all_track"; track_id: number };
+  | { cmd: "queue_all_track"; track_id: number }
+  | { cmd: "fetch_lyrics"; track_id: number };
 
 export class Remote {
   status = $state<Status>("connecting");
@@ -324,6 +338,12 @@ export class Remote {
   endSeek(ms: number) {
     if (!this.#seeking) return;
     this.#seeking = false;
+    this.seekTo(ms);
+  }
+
+  /// Jump straight to a position, for taps that are not a slider drag.
+  seekTo(ms: number) {
+    this.#seeking = false;
     this.#base = ms;
     this.#baseAt = performance.now();
     this.positionMs = ms;
@@ -464,6 +484,12 @@ export class Remote {
 
   queueAllTrack(trackId: number) {
     this.#send({ cmd: "queue_all_track", track_id: trackId });
+  }
+
+  /// Ask the desktop to look the lyrics up online. There is no reply: the
+  /// result shows up as a `libraryRev` bump once it is stored.
+  fetchLyrics(trackId: number) {
+    this.#send({ cmd: "fetch_lyrics", track_id: trackId });
   }
 
   #send(cmd: Cmd) {

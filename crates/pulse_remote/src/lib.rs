@@ -8,7 +8,7 @@ mod assets;
 mod http;
 
 pub const DEFAULT_PORT: u16 = 8770;
-pub const PROTOCOL_VERSION: u32 = 8;
+pub const PROTOCOL_VERSION: u32 = 9;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CoverSize {
@@ -128,6 +128,23 @@ pub struct AlbumDetail {
     pub tracks: Vec<PlaylistTrack>,
 }
 
+/// One line of lyrics. `time_ms` is set only for synced lyrics.
+#[derive(Clone, serde::Serialize)]
+pub struct LyricLine {
+    pub time_ms: Option<u32>,
+    pub text: String,
+}
+
+/// What a track has stored. `source` is `None` when it has nothing at all,
+/// which is different from having lyrics that are empty.
+#[derive(Clone, Default, serde::Serialize)]
+pub struct TrackLyrics {
+    pub source: Option<String>,
+    /// Timed lines can follow playback; untimed ones are just text.
+    pub synced: bool,
+    pub lines: Vec<LyricLine>,
+}
+
 pub trait LibraryReader: Send + Sync + 'static {
     fn cover(&self, id: i64, size: CoverSize) -> Option<Vec<u8>>;
     fn cover_original(&self, id: i64) -> Option<(Vec<u8>, String)>;
@@ -146,6 +163,8 @@ pub trait LibraryReader: Send + Sync + 'static {
     fn albums(&self) -> Vec<AlbumEntry>;
     /// One album and its tracks, or `None` if it no longer exists.
     fn album(&self, album_id: i64) -> Option<AlbumDetail>;
+    /// The track's stored lyrics, empty when it has none.
+    fn lyrics(&self, track_id: i64) -> TrackLyrics;
 }
 
 #[derive(Clone, serde::Serialize)]
@@ -311,6 +330,11 @@ pub enum Command {
         track_id: i64,
     },
     QueueAllTrack {
+        track_id: i64,
+    },
+    /// Ask the desktop to look the track's lyrics up online and store them.
+    /// The answer arrives as a `library_rev` bump, not as a reply.
+    FetchLyrics {
         track_id: i64,
     },
     /// Insert the track right after the current one rather than at the end.

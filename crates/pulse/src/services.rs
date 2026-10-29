@@ -679,6 +679,7 @@ fn apply_remote_command(cx: &mut App, command: pulse_remote::Command) {
         pulse_remote::Command::PlayAllTrack { track_id } => play_all_track(cx, track_id),
         pulse_remote::Command::QueueAllTrack { track_id } => queue_all_track(cx, track_id),
         pulse_remote::Command::PlayNextTrack { track_id } => play_next_track(cx, track_id),
+        pulse_remote::Command::FetchLyrics { track_id } => fetch_lyrics(cx, track_id),
     }
 }
 
@@ -901,6 +902,66 @@ fn queue_all_track(cx: &mut App, track_id: i64) {
     if let Some(track) = track {
         crate::track_list::append_tracks_to_queue(vec![Rc::new(track)], cx);
     }
+}
+
+/// Look the track up on LRCLIB and store whatever comes back. The caller hears
+/// about it through the `library_rev` bump, the same way a scan reports in.
+fn fetch_lyrics(cx: &mut App, track_id: i64) {
+    let services = cx.global::<Services>();
+    let Some(track) = services.library.track(track_id) else {
+        return;
+    };
+    let artist = services
+        .library
+        .track_artists(track_id)
+        .into_iter()
+        .next()
+        .unwrap_or_default();
+    let album = track
+        .album_id
+        .and_then(|album_id| services.library.album_title(album_id));
+    let access = services.library.lyrics_access();
+
+    cx.spawn(async move |cx| {
+        let written = cx
+            .background_spawn(async move {
+                let query = lyrics::LyricsQuery {
+                    artist,
+                    title: track.title.clone(),
+                    album,
+                    duration_secs: track.duration_ms.map(|ms| (ms / 1000).max(0) as u64),
+                };
+                match lyrics::fetch(&query) {
+                    Ok(Some(remote)) => {
+                        let raw = remote
+                            .synced
+                            .filter(|text| !text.trim().is_empty())
+                            .or_else(|| remote.plain.filter(|text| !text.trim().is_empty()));
+                        match raw {
+                            Some(text) => {
+                                access.save(track_id, &text, music_library::lyrics_source::LRCLIB)
+                            }
+                            None => access.mark_not_found(track_id),
+                        }
+                    }
+                    Ok(None) => access.mark_not_found(track_id),
+                    Err(e) => {
+                        log::warn!("lyrics fetch failed for track {track_id}: {e}");
+                        false
+                    }
+                }
+            })
+            .await;
+        if written {
+            cx.update(|cx| {
+                cx.global::<Services>()
+                    .library_rev
+                    .fetch_add(1, Ordering::Relaxed);
+                publish_remote_state(cx);
+            });
+        }
+    })
+    .detach();
 }
 
 fn play_next_track(cx: &mut App, track_id: i64) {

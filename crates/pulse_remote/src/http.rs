@@ -54,6 +54,7 @@ fn build_router(state: AppState) -> Router {
         .route("/api/tracks", get(tracks_handler))
         .route("/api/albums", get(albums_handler))
         .route("/api/album", get(album_handler))
+        .route("/api/lyrics", get(lyrics_handler))
         .route("/api/command", post(command_handler))
         .route("/ws", get(ws_handler));
 
@@ -115,6 +116,18 @@ async fn artists_handler(State(state): State<AppState>) -> impl IntoResponse {
 
 async fn albums_handler(State(state): State<AppState>) -> impl IntoResponse {
     Json(state.library.albums())
+}
+
+#[derive(serde::Deserialize)]
+struct LyricsQuery {
+    track_id: i64,
+}
+
+async fn lyrics_handler(
+    State(state): State<AppState>,
+    Query(query): Query<LyricsQuery>,
+) -> impl IntoResponse {
+    Json(state.library.lyrics(query.track_id))
 }
 
 #[derive(serde::Deserialize)]

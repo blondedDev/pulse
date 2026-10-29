@@ -10,6 +10,8 @@ One library. No account. No cloud.
 
 ---
 
+<!-- screenshots -->
+
 ## What it does
 
 **Library** — indexes the folders you choose and keeps watching them. Browse by
@@ -30,10 +32,59 @@ embedded tags, `.lrc` sidecars or LRCLIB, with a button to save what you fetched
 priority and trashes the rest, daily rotated database backups with one-click
 restore, an integrity report, and a portable export that carries its own data.
 
-**Phone remote** — an optional web UI, embedded in the binary and installable
-to a home screen: albums, artists, playlists, folders and the whole catalog,
-with search, a queue you can reorder or swipe away, and lyrics that follow
-along.
+**Phone remote** — the same library on your phone. See [Phone remote](#phone-remote).
+
+## Phone remote
+
+An optional web UI, compiled into the binary: no separate server, no second
+database, nothing to keep in sync. It is a Svelte app served by the player
+itself, so it speaks to the same queue and the same library the desktop is
+using, and the state arrives over a socket rather than a polling loop.
+
+Turn it on in **Settings → Online → Remote control**, then open the address that
+page shows:
+
+| Where the phone is | Address |
+|---|---|
+| same Wi-Fi | the LAN address — `http://192.168.1.20:8770` |
+| anywhere, with Tailscale on the phone | the tailnet address — `http://100.64.0.5:8770` |
+
+The second line only appears when Tailscale is up on the desktop, because it is
+read from the tunnel interface rather than guessed — a machine without it shows
+one address, not two.
+
+What the phone gets:
+
+- **Transport in the bottom dock**, inside thumb reach, with library, queue and
+  volume in the row above it.
+- **Swipes** — left/right on the artwork is next/previous, a queue row swiped
+  left is gone, swipe down to close a sheet.
+- **Long press** any track for play now / play next / queue / go to artist / go
+  to album.
+- **The whole library** — albums, artists, playlists, folders and the flat
+  catalog, with search across all of them.
+- **A queue you can edit** — drag rows to reorder, clear it, or drop one.
+- **Lyrics that follow along**, with the sung line highlighted and tap-to-seek,
+  and a button to fetch them when a track has none.
+
+### Add to home screen
+
+Browsers only offer a real install from a secure origin. Tailscale will put
+HTTPS in front of the port with a certificate you don't have to trust by hand:
+
+```sh
+tailscale serve --bg 8770
+```
+
+Open `https://<machine>.<your-tailnet>.ts.net` on the phone and add it to the
+home screen — it then runs without browser chrome. Over plain HTTP the UI still
+works, it just stays a tab.
+
+### What it is not
+
+There is **no authentication**. The server trusts the network it is on, which is
+why it is off by default and why the address it advertises is your LAN or your
+tailnet. Do not port-forward it to the internet.
 
 ## Offline by default
 

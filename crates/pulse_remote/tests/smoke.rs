@@ -140,6 +140,10 @@ impl pulse_remote::LibraryReader for TestLibrary {
         })
     }
 
+    fn recent(&self) -> Vec<pulse_remote::PlaylistTrack> {
+        vec![smoke_track()]
+    }
+
     fn lyrics(&self, track_id: i64) -> pulse_remote::TrackLyrics {
         if track_id != 11 {
             return pulse_remote::TrackLyrics::default();
@@ -177,7 +181,7 @@ fn serves_state_snapshot() {
     let addr: SocketAddr = ([127, 0, 0, 1], 18770).into();
     let (handle, rx) = pulse_remote::channel();
     let (commands, _command_rx) = pulse_remote::commands();
-    let (_server, _ready) = pulse_remote::spawn(addr, rx, commands, Arc::new(TestLibrary));
+    let (_server, _ready) = pulse_remote::spawn(addr, rx, commands, Arc::new(TestLibrary), None);
     handle.publish(pulse_remote::PlayerState {
         has_track: true,
         title: Some("Smoke Track".into()),
@@ -257,6 +261,50 @@ fn serves_state_snapshot() {
     let no_lyrics = try_get(addr, "/api/lyrics?track_id=12").expect("lyrics endpoint");
     assert!(no_lyrics.contains("\"source\":null"), "lyrics: {no_lyrics}");
     assert!(no_lyrics.contains("\"lines\":[]"), "lyrics: {no_lyrics}");
+
+    let recent = try_get(addr, "/api/recent").expect("recent endpoint");
+    assert!(recent.contains("Smoke Track"), "recent: {recent}");
+}
+
+/// The token is the only thing standing between the tailnet and the queue, so
+/// it is worth a test of its own: refused without it, accepted through the link
+/// once, and remembered afterwards as a cookie.
+#[test]
+fn a_token_gates_every_route() {
+    let addr: SocketAddr = ([127, 0, 0, 1], 18771).into();
+    let (handle, rx) = pulse_remote::channel();
+    let (commands, _command_rx) = pulse_remote::commands();
+    let (_server, _ready) = pulse_remote::spawn(
+        addr,
+        rx,
+        commands,
+        Arc::new(TestLibrary),
+        Some("s3cret".into()),
+    );
+    handle.publish(pulse_remote::PlayerState::idle());
+
+    let mut denied = String::new();
+    for _ in 0..50 {
+        if let Some(response) = raw_get(addr, "/api/state", None) {
+            denied = response;
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    assert!(denied.starts_with("http/1.1 401"), "{denied}");
+
+    let wrong = raw_get(addr, "/api/state?token=nope", None).expect("a response");
+    assert!(wrong.starts_with("http/1.1 401"), "{wrong}");
+
+    // The link the QR code carries: let in once, then handed a cookie and sent
+    // to the same page without the token in the address bar.
+    let linked = raw_get(addr, "/api/state?token=s3cret", None).expect("a response");
+    assert!(linked.starts_with("http/1.1 303"), "{linked}");
+    assert!(linked.contains("set-cookie: pulse_token=s3cret"), "{linked}");
+    assert!(linked.contains("location: /api/state\r\n"), "{linked}");
+
+    let cookie = raw_get(addr, "/api/state", Some("pulse_token=s3cret")).expect("a response");
+    assert!(cookie.starts_with("http/1.1 200"), "{cookie}");
 }
 
 fn wait_for_state(addr: SocketAddr) -> String {
@@ -267,6 +315,26 @@ fn wait_for_state(addr: SocketAddr) -> String {
         std::thread::sleep(Duration::from_millis(100));
     }
     panic!("server did not respond on {addr}");
+}
+
+/// The whole response, so a test can look at the status and headers too.
+fn raw_get(addr: SocketAddr, path: &str, cookie: Option<&str>) -> Option<String> {
+    let mut stream = TcpStream::connect_timeout(&addr, Duration::from_millis(200)).ok()?;
+    let extra = match cookie {
+        Some(cookie) => format!("Cookie: {cookie}\r\n"),
+        None => String::new(),
+    };
+    stream
+        .write_all(
+            format!(
+                "GET {path} HTTP/1.1\r\nHost: localhost\r\n{extra}Connection: close\r\n\r\n"
+            )
+            .as_bytes(),
+        )
+        .ok()?;
+    let mut buf = String::new();
+    stream.read_to_string(&mut buf).ok()?;
+    Some(buf.to_lowercase())
 }
 
 fn try_get(addr: SocketAddr, path: &str) -> Option<String> {

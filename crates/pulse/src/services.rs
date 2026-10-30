@@ -432,6 +432,10 @@ pub fn apply_remote_state(cx: &mut App) {
     let store = cx.global::<crate::settings_store::SettingsStore>();
     let enabled = store.remote_enabled();
     let port = store.remote_port();
+    let token = match store.remote_token() {
+        "" => None,
+        token => Some(token.to_string()),
+    };
     let services = cx.global::<Services>().clone();
 
     let ready = {
@@ -443,6 +447,7 @@ pub fn apply_remote_state(cx: &mut App) {
                 services.remote_state_rx.clone(),
                 services.remote_command_tx.clone(),
                 Arc::new(services.library.library_access()),
+                token,
             );
             *slot = Some(server);
             Some(ready)
@@ -678,6 +683,7 @@ fn apply_remote_command(cx: &mut App, command: pulse_remote::Command) {
         } => queue_album_track(cx, album_id, track_id),
         pulse_remote::Command::PlayAllTrack { track_id } => play_all_track(cx, track_id),
         pulse_remote::Command::QueueAllTrack { track_id } => queue_all_track(cx, track_id),
+        pulse_remote::Command::PlayRecentTrack { track_id } => play_recent_track(cx, track_id),
         pulse_remote::Command::PlayNextTrack { track_id } => play_next_track(cx, track_id),
         pulse_remote::Command::FetchLyrics { track_id } => fetch_lyrics(cx, track_id),
     }
@@ -888,6 +894,21 @@ fn play_all_track(cx: &mut App, track_id: i64) {
         index,
         crate::playback_queue::QueueSource::AllTracks,
         Some(crate::localization::tr().all_tracks.clone()),
+        cx,
+    );
+}
+
+fn play_recent_track(cx: &mut App, track_id: i64) {
+    let tracks = cx.global::<Services>().library.recent_tracks();
+    let Some(index) = tracks.iter().position(|t| t.id == track_id) else {
+        return;
+    };
+    let tracks: Vec<Rc<Track>> = tracks.into_iter().map(Rc::new).collect();
+    crate::track_list::replace_queue_and_play(
+        tracks,
+        index,
+        crate::playback_queue::QueueSource::Unknown,
+        Some(crate::localization::tr().recently_played.clone()),
         cx,
     );
 }
@@ -1245,7 +1266,9 @@ fn build_remote_state(cx: &mut App) -> pulse_remote::PlayerState {
         )
     });
     drop(queue);
-    let volume = cx.global::<crate::settings_store::SettingsStore>().volume();
+    let settings = cx.global::<crate::settings_store::SettingsStore>();
+    let volume = settings.volume();
+    let volume_inline = settings.remote_volume_inline();
     let volume_locked = services.output.is_exclusive();
 
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
@@ -1290,6 +1313,7 @@ fn build_remote_state(cx: &mut App) -> pulse_remote::PlayerState {
             repeat,
             volume,
             volume_locked,
+            volume_inline,
             queue: queue_items,
             ..pulse_remote::PlayerState::idle()
         };
@@ -1316,6 +1340,7 @@ fn build_remote_state(cx: &mut App) -> pulse_remote::PlayerState {
         repeat,
         volume,
         volume_locked,
+        volume_inline,
         queue: queue_items,
     }
 }

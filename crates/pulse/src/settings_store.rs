@@ -480,6 +480,14 @@ pub struct UserSettings {
     pub remote_enabled: bool,
     #[serde(default = "default_remote_port")]
     pub remote_port: u16,
+    /// Empty means "open to the network", which is the default. A non-empty
+    /// token gates every request, and a phone picks it up from the QR link.
+    #[serde(default)]
+    pub remote_token: String,
+    #[serde(default = "default_true")]
+    pub remote_qr: bool,
+    #[serde(default)]
+    pub remote_volume_inline: bool,
     // Torrent and the network-cache size were removed. These stay so an older
     // settings.json still deserializes instead of erroring out; they are never
     // read and get dropped on the next save.
@@ -562,6 +570,9 @@ impl Default for UserSettings {
             lyrics_prefer_lrclib: false,
             remote_enabled: false,
             remote_port: pulse_remote::DEFAULT_PORT,
+            remote_token: String::new(),
+            remote_qr: true,
+            remote_volume_inline: false,
             _legacy_torrent_sources: None,
             _legacy_torrent_upload: None,
             _legacy_network_cache_gb: None,
@@ -972,6 +983,33 @@ impl SettingsStore {
 
     pub fn set_remote_port(&mut self, port: u16) -> anyhow::Result<()> {
         self.settings.remote_port = port;
+        self.save()
+    }
+
+    pub fn remote_token(&self) -> &str {
+        &self.settings.remote_token
+    }
+
+    pub fn set_remote_token(&mut self, token: &str) -> anyhow::Result<()> {
+        self.settings.remote_token = token.trim().to_string();
+        self.save()
+    }
+
+    pub fn remote_qr(&self) -> bool {
+        self.settings.remote_qr
+    }
+
+    pub fn set_remote_qr(&mut self, show: bool) -> anyhow::Result<()> {
+        self.settings.remote_qr = show;
+        self.save()
+    }
+
+    pub fn remote_volume_inline(&self) -> bool {
+        self.settings.remote_volume_inline
+    }
+
+    pub fn set_remote_volume_inline(&mut self, inline: bool) -> anyhow::Result<()> {
+        self.settings.remote_volume_inline = inline;
         self.save()
     }
 
@@ -1731,6 +1769,9 @@ mod tests {
             lyrics_prefer_lrclib: false,
             remote_enabled: false,
             remote_port: pulse_remote::DEFAULT_PORT,
+            remote_token: String::new(),
+            remote_qr: true,
+            remote_volume_inline: false,
             _legacy_torrent_sources: None,
             _legacy_torrent_upload: None,
             _legacy_network_cache_gb: None,

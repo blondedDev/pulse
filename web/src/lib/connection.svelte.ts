@@ -18,6 +18,7 @@ export type PlayerState = {
   repeat: RepeatMode;
   volume: number;
   volume_locked: boolean;
+  volume_inline: boolean;
 };
 
 export type QueueItem = {
@@ -154,6 +155,7 @@ type Cmd =
   | { cmd: "queue_album_track"; album_id: number; track_id: number }
   | { cmd: "play_next_track"; track_id: number }
   | { cmd: "play_all_track"; track_id: number }
+  | { cmd: "play_recent_track"; track_id: number }
   | { cmd: "queue_all_track"; track_id: number }
   | { cmd: "fetch_lyrics"; track_id: number };
 
@@ -175,6 +177,7 @@ export class Remote {
   repeat = $state<RepeatMode>("off");
   volume = $state(1);
   volumeLocked = $state(false);
+  volumeInline = $state(false);
 
   coverUrl = $derived(this.coverId !== null ? `/api/cover?id=${this.coverId}&size=full` : null);
   currentTrackId = $derived(
@@ -260,6 +263,7 @@ export class Remote {
     this.shuffle = state.shuffle;
     this.repeat = state.repeat;
     this.volumeLocked = state.volume_locked;
+    this.volumeInline = state.volume_inline ?? false;
     if (!this.#volumeAdjusting) this.volume = state.volume;
     this.#base = state.position_ms;
     this.#baseAt = performance.now();
@@ -480,6 +484,11 @@ export class Remote {
 
   playAllTrack(trackId: number) {
     this.#send({ cmd: "play_all_track", track_id: trackId });
+  }
+
+  /// Play a track inside the recent list, so next/prev walk that list.
+  playRecentTrack(trackId: number) {
+    this.#send({ cmd: "play_recent_track", track_id: trackId });
   }
 
   queueAllTrack(trackId: number) {

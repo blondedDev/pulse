@@ -71,19 +71,40 @@ The second line only appears when Tailscale is up on the desktop, because it is
 read from the tunnel interface rather than guessed — a machine without it shows
 one address, not two.
 
+Typing an address on a phone is the annoying part, so the same page can show a
+**QR code** for the camera (on by default, one switch to hide it). It encodes
+the tailnet address when there is one, so a scan keeps working when you leave
+the house.
+
 What the phone gets:
 
 - **Transport in the bottom dock**, inside thumb reach, with library, queue and
-  volume in the row above it.
+  volume in the row above it. The volume control can be the popover over the
+  artwork or a **slider in the dock** — a setting on the desktop, since it is a
+  preference about the phone, not the player.
 - **Swipes** — left/right on the artwork is next/previous, a queue row swiped
   left is gone, swipe down to close a sheet.
 - **Long press** any track for play now / play next / queue / go to artist / go
   to album.
 - **The whole library** — albums, artists, playlists, folders and the flat
-  catalog, with search across all of them.
+  catalog, with search across all of them, plus a **Recent** tab of what was
+  played last.
 - **A queue you can edit** — drag rows to reorder, clear it, or drop one.
 - **Lyrics that follow along**, with the sung line highlighted and tap-to-seek,
-  and a button to fetch them when a track has none.
+  and a button to fetch them when a track has none. The screen is held awake
+  while they are open, so it does not dim mid-song.
+
+### Access token
+
+Off by default: on a home network the remote is open to anything on it. Turn on
+**Access token** and every request needs it — the page, the covers, the socket,
+the commands. The QR code carries it, so scanning still just works: the phone is
+let in once and handed a cookie, and the token is stripped from the address bar
+on the way so it does not end up in history. Generate or remove it from the same
+row; changing it restarts the server, which drops every connected phone.
+
+It is a bearer credential — anyone holding it has the same control as the person
+at the keyboard — so treat the link like a password.
 
 ### Add to home screen
 
@@ -100,9 +121,10 @@ works, it just stays a tab.
 
 ### What it is not
 
-There is **no authentication**. The server trusts the network it is on, which is
-why it is off by default and why the address it advertises is your LAN or your
-tailnet. Do not port-forward it to the internet.
+There is **no account system**: one token, shared by every device, or nothing at
+all. The server trusts the network it is on, which is why it is off by default
+and why the address it advertises is your LAN or your tailnet. Do not
+port-forward it to the internet.
 
 ## Offline by default
 

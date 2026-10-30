@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use gpui::{
     Anchor, AnyElement, App, Axis, ElementId, Entity, IntoElement, ParentElement, SharedString,
-    Styled, Window, actions, div, px,
+    Styled, Window, actions, div, img, px,
 };
 use gpui_component::{
     Disableable, Icon, IconName, Selectable, Sizable, WindowExt,
@@ -17,6 +17,7 @@ use gpui_component::{
     v_flex,
 };
 
+use gpui::prelude::FluentBuilder;
 use ui_components::settings::{SettingField, SettingGroup, SettingItem, SettingPage, Settings};
 
 use crate::localization::tr;
@@ -682,6 +683,154 @@ fn remote_group(remote_port_input: Entity<InputState>) -> SettingGroup {
             }),
         )
         .description(tr().remote_address_desc.clone()),
+    );
+
+    // The code for the phone camera. It encodes the tailnet address when there
+    // is one, so a scan keeps working away from home.
+    group = group.item(
+        SettingItem::new(
+            tr().remote_qr.clone(),
+            SettingField::render(|_window, cx: &mut App| {
+                let show = cx.global::<SettingsStore>().remote_qr();
+                h_flex().items_center().justify_end().child(
+                    Switch::new("remote-qr-toggle")
+                        .checked(show)
+                        .on_click(|new_val, _, cx| {
+                            if let Err(e) = cx
+                                .global_mut::<SettingsStore>()
+                                .set_remote_qr(*new_val)
+                            {
+                                notify_save_error(cx, e);
+                            }
+                        }),
+                )
+            }),
+        )
+        .description(tr().remote_qr_desc.clone()),
+    );
+
+    group = group.item(
+        SettingItem::new(
+            tr().remote_qr_code.clone(),
+            SettingField::render(|_window, cx: &mut App| {
+                let store = cx.global::<SettingsStore>();
+                let show = store.remote_qr() && store.remote_enabled();
+                let url = crate::net::phone_url(store.remote_port(), Some(store.remote_token()));
+                let mut column = v_flex().items_end().gap_2();
+                if !show {
+                    column = column.child(
+                        div()
+                            .text_sm()
+                            .text_color(Colors::muted_foreground(cx))
+                            .child(tr().remote_qr_off.clone()),
+                    );
+                } else {
+                    match crate::remote_qr::path_for(&url) {
+                        Some(path) => {
+                            column = column.child(
+                                img(path)
+                                    .w(px(132.))
+                                    .h(px(132.))
+                                    .rounded_md()
+                                    .border_1()
+                                    .border_color(Colors::border(cx)),
+                            );
+                        }
+                        None => {
+                            column = column.child(
+                                div()
+                                    .text_sm()
+                                    .text_color(Colors::muted_foreground(cx))
+                                    .child(tr().remote_qr_failed.clone()),
+                            );
+                        }
+                    }
+                }
+                h_flex().items_center().justify_end().child(column)
+            }),
+        )
+        .description(tr().remote_qr_code_desc.clone()),
+    );
+
+    // Off by default: the token is a bearer credential, so it is only worth
+    // turning on when the remote is reachable from more than the LAN.
+    group = group.item(
+        SettingItem::new(
+            tr().remote_token.clone(),
+            SettingField::render(|_window, cx: &mut App| {
+                let token = cx.global::<SettingsStore>().remote_token().to_string();
+                let set = !token.is_empty();
+                let short: String = token.chars().take(8).collect();
+                h_flex()
+                    .items_center()
+                    .gap_2()
+                    .justify_end()
+                    .when(set, |this| {
+                        this.child(
+                            div()
+                                .text_xs()
+                                .text_color(Colors::muted_foreground(cx))
+                                .child(if short.is_empty() {
+                                    String::new()
+                                } else {
+                                    format!("{short}\u{2026}")
+                                }),
+                        )
+                    })
+                    .child(
+                        Button::new("remote-token-button")
+                            .small()
+                            .label(if set {
+                                tr().remote_token_remove.clone()
+                            } else {
+                                tr().remote_token_generate.clone()
+                            })
+                            .on_click(|_, _, cx| {
+                                let next = if cx.global::<SettingsStore>().remote_token().is_empty()
+                                {
+                                    crate::net::new_remote_token()
+                                } else {
+                                    String::new()
+                                };
+                                if let Err(e) =
+                                    cx.global_mut::<SettingsStore>().set_remote_token(&next)
+                                {
+                                    notify_save_error(cx, e);
+                                    return;
+                                }
+                                // The token is checked by the running server,
+                                // so changing it means restarting it.
+                                crate::services::apply_remote_state(cx);
+                            }),
+                    )
+            }),
+        )
+        .description(tr().remote_token_desc.clone()),
+    );
+
+    // A phone-UI preference, kept here because this is where the remote is
+    // configured; the desktop player is unaffected either way.
+    group = group.item(
+        SettingItem::new(
+            tr().remote_volume_inline.clone(),
+            SettingField::render(|_window, cx: &mut App| {
+                let inline = cx.global::<SettingsStore>().remote_volume_inline();
+                h_flex().items_center().justify_end().child(
+                    Switch::new("remote-volume-inline")
+                        .checked(inline)
+                        .on_click(|new_val, _, cx| {
+                            if let Err(e) = cx
+                                .global_mut::<SettingsStore>()
+                                .set_remote_volume_inline(*new_val)
+                            {
+                                notify_save_error(cx, e);
+                            }
+                            crate::services::publish_remote_state(cx);
+                        }),
+                )
+            }),
+        )
+        .description(tr().remote_volume_inline_desc.clone()),
     );
 
     group

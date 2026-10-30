@@ -96,6 +96,38 @@
     el?.scrollIntoView({ block: "center", behavior: "smooth" });
   });
 
+  // Keep the screen awake while the lyrics are open. The sheet exists to be
+  // read at arm's length across a room, and a phone that dims after thirty
+  // seconds defeats that. The browser drops the lock whenever the page is
+  // hidden, so it is taken again when the phone comes back.
+  $effect(() => {
+    let sentinel: WakeLockSentinel | null = null;
+    let stopped = false;
+
+    async function acquire() {
+      if (stopped || document.visibilityState !== "visible") return;
+      try {
+        sentinel = (await navigator.wakeLock?.request("screen")) ?? null;
+      } catch {
+        // No wake lock: an older browser, a battery saver, or a page that is
+        // not on https. The lyrics still work, the screen just dims.
+      }
+    }
+
+    function onVisibility() {
+      if (document.visibilityState === "visible") void acquire();
+    }
+
+    void acquire();
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      stopped = true;
+      document.removeEventListener("visibilitychange", onVisibility);
+      void sentinel?.release().catch(() => {});
+      sentinel = null;
+    };
+  });
+
   function pauseFollow() {
     follow = false;
     if (followTimer !== null) clearTimeout(followTimer);

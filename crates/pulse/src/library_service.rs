@@ -281,6 +281,10 @@ impl pulse_remote::LibraryReader for LibraryAccess {
             .collect()
     }
 
+    fn recent(&self) -> Vec<pulse_remote::PlaylistTrack> {
+        to_playlist_tracks(&*self.repo, recent_tracks(&*self.repo))
+    }
+
     fn lyrics(&self, track_id: i64) -> pulse_remote::TrackLyrics {
         let variants = self.repo.lyrics_variants(track_id).unwrap_or_default();
         // The desktop's preference setting is not reachable from here, so the
@@ -356,6 +360,32 @@ fn non_empty(value: String) -> Option<String> {
     } else {
         Some(value)
     }
+}
+
+/// Tracks that were played before, newest first.
+///
+/// Built from the last-played stamps the library keeps per track, so a track
+/// played twice appears once: this is "what was I listening to", not a log.
+/// Capped because the remote only ever shows a screenful.
+fn recent_tracks(repo: &dyn LibraryRepository) -> Vec<music_library::Track> {
+    let last_played: std::collections::HashMap<i64, u64> = repo
+        .track_listings()
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|listing| listing.last_played.map(|at| (listing.track_id, at)))
+        .collect();
+    if last_played.is_empty() {
+        return Vec::new();
+    }
+    let mut tracks: Vec<music_library::Track> = repo
+        .all_tracks()
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|track| last_played.contains_key(&track.id))
+        .collect();
+    tracks.sort_by_key(|track| std::cmp::Reverse(last_played[&track.id]));
+    tracks.truncate(60);
+    tracks
 }
 
 fn to_playlist_tracks(
@@ -706,6 +736,10 @@ impl LibraryService {
 
     pub fn all_tracks(&self) -> Vec<music_library::Track> {
         self.repo.all_tracks().unwrap_or_default()
+    }
+
+    pub fn recent_tracks(&self) -> Vec<music_library::Track> {
+        recent_tracks(&*self.repo)
     }
 
     pub fn track_count(&self) -> i64 {

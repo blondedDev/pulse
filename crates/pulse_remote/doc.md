@@ -13,7 +13,7 @@ shows nothing rather than a frozen track.
 
 - `lib.rs` — the protocol: `PlayerState`, `QueueItem`, the library DTOs,
   `Command`, `LibraryReader`, and `spawn` (the socket, thread and shutdown
-  handle).
+  handle; it also takes the access token, or `None`).
 - `http.rs` — the Axum router and handlers.
 - `assets.rs` — `rust-embed` of `../../web/dist`. **Release builds only**: the
   router's static fallback is behind `#[cfg(not(debug_assertions))]`, so a debug
@@ -51,6 +51,7 @@ the ~5 Hz position tick does not rebuild the queue array.
 | `GET /api/folders?parent=` | one folder-tree level: the roots when `parent` is empty |
 | `GET /api/folder?path=` | every track at or below `path` |
 | `GET /api/tracks` | the whole catalog in display order |
+| `GET /api/recent` | what was played last, newest first, capped at 60 |
 | `POST /api/command` | a `Command`, 202 on acceptance |
 | `GET /ws` | WebSocket, one `PlayerState` per change |
 
@@ -87,13 +88,30 @@ artist grouping, so the server never sees `LibraryService`.
   different from having empty lyrics. `FetchLyrics` asks the app to look the
   track up on LRCLIB; there is no reply, the result arrives as a `library_rev`
   bump so every client refreshes the same way it does after a scan.
+- **The volume control is a desktop setting.** `PlayerState.volume_inline` tells
+  the web app whether the dock shows a slider or the popover over the artwork.
+  The phone has no setting of its own: it is a preference about the phone, so it
+  lives on the desktop, and it rides in the state payload like everything else.
 - **The remote picks lyrics without the desktop's preference.** `pick` is called
   with `prefer_lrclib = false`, so the phone shows the sidecar, then embedded,
   then the online copy. The setting lives in the app's settings, which the
   remote's `LibraryReader` implementation does not reach.
-- **No authentication.** The server binds `0.0.0.0` on the configured port and
-  trusts the network it is on. That is the documented model; do not expose the
-  port beyond a LAN you control.
+- **No authentication unless a token is set.** The server binds `0.0.0.0` on
+  the configured port and, by default, trusts the network it is on. Set
+  `remote_token` and a middleware gates *every* route — the embedded page
+  included, since the app is the thing worth protecting, not just the API.
+  A phone gets in through `?token=` (what the QR code carries), is handed a
+  `pulse_token` cookie, and is redirected to the same URL with the parameter
+  stripped, so the credential does not sit in the address bar or in history.
+  Changing the token restarts the server, which is the only way to revoke the
+  cookies already handed out.
+- **The token is checked in one middleware, not per handler.** Every new route
+  is protected by existing, which is the point: forgetting a `require_token`
+  on one handler is how these things leak.
+- **`/api/recent` is derived, not logged.** It is built from the last-played
+  stamp the library keeps per track, so a track played twice appears once and
+  nothing extra is written. `PlayRecentTrack` plays a row *in that list*, so
+  next/prev walk the recent set rather than the whole catalog.
 - **Shutdown is a oneshot + join.** `RemoteServer::drop` sends the shutdown
   signal and joins the thread, so toggling the setting off actually closes the
   listener instead of leaving it bound.

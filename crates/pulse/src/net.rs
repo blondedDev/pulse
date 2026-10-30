@@ -72,6 +72,31 @@ pub fn tailscale_url(port: u16) -> Option<String> {
     tailscale_ipv4().map(|ip| format!("http://{ip}:{port}"))
 }
 
+/// The address a phone should get, token and all.
+///
+/// The tailnet address when Tailscale is up, because it keeps working when the
+/// phone leaves the house and costs nothing when it is home; the LAN address
+/// otherwise. The token rides in the query string so that scanning the QR code
+/// both opens the page and authorises the device.
+pub fn phone_url(port: u16, token: Option<&str>) -> String {
+    let base = tailscale_url(port).unwrap_or_else(|| remote_url(port));
+    match token.map(str::trim).filter(|token| !token.is_empty()) {
+        Some(token) => format!("{base}/?token={token}"),
+        None => base,
+    }
+}
+
+/// A fresh remote token: 128 bits of randomness, written as hex.
+///
+/// Long enough that guessing it is pointless, short enough to sit in a URL. It
+/// is a bearer credential — anyone holding it gets the same control as the
+/// person at the keyboard — so it is only ever handed out on this screen.
+pub fn new_remote_token() -> String {
+    use rand::Rng as _;
+    let mut rng = rand::rng();
+    format!("{:016x}{:016x}", rng.random::<u64>(), rng.random::<u64>())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

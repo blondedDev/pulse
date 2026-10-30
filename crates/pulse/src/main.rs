@@ -42,6 +42,7 @@ pub mod now_playing;
 pub mod onboarding_view;
 pub mod panel_header;
 pub mod pipewire_alsa_gate;
+pub mod remote_qr;
 pub mod play_button;
 pub mod play_history;
 pub mod playback_opener;

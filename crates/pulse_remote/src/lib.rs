@@ -8,7 +8,7 @@ mod assets;
 mod http;
 
 pub const DEFAULT_PORT: u16 = 8770;
-pub const PROTOCOL_VERSION: u32 = 9;
+pub const PROTOCOL_VERSION: u32 = 10;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CoverSize {
@@ -165,6 +165,8 @@ pub trait LibraryReader: Send + Sync + 'static {
     fn album(&self, album_id: i64) -> Option<AlbumDetail>;
     /// The track's stored lyrics, empty when it has none.
     fn lyrics(&self, track_id: i64) -> TrackLyrics;
+    /// What was played recently, newest first.
+    fn recent(&self) -> Vec<PlaylistTrack>;
 }
 
 #[derive(Clone, serde::Serialize)]
@@ -194,6 +196,9 @@ pub struct PlayerState {
     pub repeat: RepeatMode,
     pub volume: f32,
     pub volume_locked: bool,
+    /// The user's choice of volume control for the remote: a slider in the
+    /// dock rather than a popover over the artwork.
+    pub volume_inline: bool,
     #[serde(skip)]
     pub queue: Arc<Vec<QueueItem>>,
 }
@@ -332,6 +337,10 @@ pub enum Command {
     QueueAllTrack {
         track_id: i64,
     },
+    /// Play a track inside the recently-played list, so next/prev walk it.
+    PlayRecentTrack {
+        track_id: i64,
+    },
     /// Ask the desktop to look the track's lyrics up online and store them.
     /// The answer arrives as a `library_rev` bump, not as a reply.
     FetchLyrics {
@@ -385,6 +394,7 @@ pub fn spawn(
     rx: StateRx,
     commands: CommandSink,
     library: Arc<dyn LibraryReader>,
+    token: Option<String>,
 ) -> (RemoteServer, ReadyRx) {
     let (shutdown_tx, shutdown_rx) = oneshot::channel();
     let (ready_tx, ready_rx) = oneshot::channel();
@@ -414,7 +424,7 @@ pub fn spawn(
                 }
             };
             tokio::select! {
-                result = http::serve(listener, rx, commands, library) => {
+                result = http::serve(listener, rx, commands, library, token) => {
                     if let Err(err) = result {
                         log::error!("pulse-remote: server error: {err}");
                     }

@@ -5,6 +5,7 @@
   import PlaylistBrowser from "./PlaylistBrowser.svelte";
   import FolderBrowser from "./FolderBrowser.svelte";
   import AllTracks from "./AllTracks.svelte";
+  import Recent from "./Recent.svelte";
   import AlbumBrowser from "./AlbumBrowser.svelte";
   import Search from "./Search.svelte";
 
@@ -20,7 +21,7 @@
     ontarget?: () => void;
   } = $props();
 
-  let tab = $state<"artists" | "albums" | "folders" | "all" | "playlists">("artists");
+  let tab = $state<"recent" | "artists" | "albums" | "folders" | "all" | "playlists">("artists");
   let searching = $state(false);
   let query = $state("");
   let searchEl = $state<HTMLInputElement | null>(null);
@@ -56,15 +57,17 @@
   );
 
   const tabTitle = $derived(
-    tab === "artists"
-      ? "Artists"
-      : tab === "albums"
-        ? "Albums"
-        : tab === "folders"
-          ? "Folders"
-          : tab === "all"
-            ? "All tracks"
-            : "Playlists",
+    tab === "recent"
+      ? "Recent"
+      : tab === "artists"
+        ? "Artists"
+        : tab === "albums"
+          ? "Albums"
+          : tab === "folders"
+            ? "Folders"
+            : tab === "all"
+              ? "All tracks"
+              : "Playlists",
   );
 
   const title = $derived(
@@ -135,6 +138,7 @@
   }
 
   const tabs = [
+    { id: "recent", label: "Recent" },
     { id: "artists", label: "Artists" },
     { id: "albums", label: "Albums" },
     { id: "folders", label: "Folders" },
@@ -299,6 +303,9 @@
       bind:inDetail={fInDetail}
       bind:detailName={fName}
     />
+  </div>
+  <div class={`min-h-0 flex-1 flex-col ${tab === "recent" ? "flex" : "hidden"}`}>
+    <Recent {remote} />
   </div>
   <div class={`min-h-0 flex-1 flex-col ${tab === "all" ? "flex" : "hidden"}`}>
     <AllTracks {remote} />

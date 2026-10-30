@@ -1,11 +1,12 @@
 use axum::{
     Json, Router,
     extract::{
-        Query, State,
+        Query, Request, State,
         ws::{Message, WebSocket, WebSocketUpgrade},
     },
-    http::{StatusCode, header},
-    response::{IntoResponse, Response},
+    http::{HeaderMap, StatusCode, Uri, header},
+    middleware::{self, Next},
+    response::{IntoResponse, Redirect, Response},
     routing::{get, post},
 };
 use std::sync::Arc;
@@ -19,6 +20,9 @@ struct AppState {
     rx: StateRx,
     commands: CommandSink,
     library: Arc<dyn LibraryReader>,
+    /// `None` when the remote is open to anyone on the network, which is the
+    /// default. A set token gates every route, static files included.
+    token: Option<String>,
 }
 
 pub async fn serve(
@@ -26,11 +30,13 @@ pub async fn serve(
     rx: StateRx,
     commands: CommandSink,
     library: Arc<dyn LibraryReader>,
+    token: Option<String>,
 ) -> anyhow::Result<()> {
     let router = build_router(AppState {
         rx,
         commands,
         library,
+        token,
     });
     log::info!(
         "pulse-remote: listening on http://{}",
@@ -55,13 +61,77 @@ fn build_router(state: AppState) -> Router {
         .route("/api/albums", get(albums_handler))
         .route("/api/album", get(album_handler))
         .route("/api/lyrics", get(lyrics_handler))
+        .route("/api/recent", get(recent_handler))
         .route("/api/command", post(command_handler))
         .route("/ws", get(ws_handler));
 
     #[cfg(not(debug_assertions))]
     let router = router.fallback(crate::assets::static_handler);
 
-    router.with_state(state)
+    router
+        .layer(middleware::from_fn_with_state(state.clone(), token_guard))
+        .with_state(state)
+}
+
+/// The token check, applied to everything.
+///
+/// A phone gets in once, through the `?token=` link the QR code carries, and is
+/// then handed a cookie so every later request — every cover, every socket
+/// upgrade — is authorised without the web app knowing a token exists. The
+/// redirect drops the parameter from the URL so it does not end up in history
+/// or a bookmark.
+async fn token_guard(State(state): State<AppState>, request: Request, next: Next) -> Response {
+    let Some(expected) = state.token.as_deref().filter(|token| !token.is_empty()) else {
+        return next.run(request).await;
+    };
+    if cookie_token(request.headers()) == Some(expected) {
+        return next.run(request).await;
+    }
+    if query_token(request.uri()) == Some(expected) {
+        let target = without_token(request.uri());
+        let cookie = format!(
+            "pulse_token={expected}; Path=/; Max-Age=31536000; HttpOnly; SameSite=Lax"
+        );
+        return ([(header::SET_COOKIE, cookie)], Redirect::to(&target)).into_response();
+    }
+    (
+        StatusCode::UNAUTHORIZED,
+        "Pulse remote: this address needs a token.\n\
+         Open the link shown in Settings \u{2192} Online (the QR code carries it).\n",
+    )
+        .into_response()
+}
+
+fn query_token(uri: &Uri) -> Option<&str> {
+    uri.query()?
+        .split('&')
+        .find_map(|pair| pair.strip_prefix("token="))
+}
+
+fn without_token(uri: &Uri) -> String {
+    let kept: Vec<&str> = uri
+        .query()
+        .map(|query| {
+            query
+                .split('&')
+                .filter(|pair| !pair.starts_with("token="))
+                .collect()
+        })
+        .unwrap_or_default();
+    if kept.is_empty() {
+        uri.path().to_string()
+    } else {
+        format!("{}?{}", uri.path(), kept.join("&"))
+    }
+}
+
+fn cookie_token(headers: &HeaderMap) -> Option<&str> {
+    headers
+        .get(header::COOKIE)?
+        .to_str()
+        .ok()?
+        .split(';')
+        .find_map(|part| part.trim().strip_prefix("pulse_token="))
 }
 
 async fn state_handler(State(state): State<AppState>) -> impl IntoResponse {
@@ -121,6 +191,10 @@ async fn albums_handler(State(state): State<AppState>) -> impl IntoResponse {
 #[derive(serde::Deserialize)]
 struct LyricsQuery {
     track_id: i64,
+}
+
+async fn recent_handler(State(state): State<AppState>) -> impl IntoResponse {
+    Json(state.library.recent())
 }
 
 async fn lyrics_handler(

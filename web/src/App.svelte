@@ -5,6 +5,7 @@
   import ArtistBrowser from "./lib/ArtistBrowser.svelte";
   import PlaylistBrowser from "./lib/PlaylistBrowser.svelte";
   import VolumeControl from "./lib/VolumeControl.svelte";
+  import InlineVolume from "./lib/InlineVolume.svelte";
   import TrackActions from "./lib/TrackActions.svelte";
   import Lyrics from "./lib/Lyrics.svelte";
   import { longpress } from "./lib/longpress";
@@ -513,9 +514,16 @@
           <path d="M12 18v4" />
         </svg>
       </button>
-      <VolumeControl {remote} direction="up" />
+      {#if !remote.volumeInline}
+        <VolumeControl {remote} direction="up" />
+      {/if}
     </div>
     {@render transport("dock")}
+    {#if remote.volumeInline}
+      <div class="pt-1">
+        <InlineVolume {remote} />
+      </div>
+    {/if}
   </footer>
   </div>
 

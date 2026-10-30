@@ -27,7 +27,7 @@ default-members = ["crates/pulse"]
 [workspace.package]
 publish = false
 # Shown in Settings → General → Version.
-version = "5.1.0"
+version = "5.2.0"
 edition = "2024"
 
 [workspace.dependencies]

@@ -147,9 +147,6 @@ pub struct SettingGroup {
     description: Option<SharedString>,
     items: Vec<SettingItem>,
     anchor: Option<SharedString>,
-    /// Take a whole row of the grid. For a card that is a list rather than a
-    /// handful of rows, half the width is not enough.
-    wide: bool,
 }
 
 impl SettingGroup {
@@ -159,12 +156,6 @@ impl SettingGroup {
 
     pub fn anchor(mut self, anchor: impl Into<SharedString>) -> Self {
         self.anchor = Some(anchor.into());
-        self
-    }
-
-    /// Span every column of the page grid.
-    pub fn wide(mut self) -> Self {
-        self.wide = true;
         self
     }
 
@@ -184,11 +175,9 @@ impl SettingGroup {
         self
     }
 
-    fn render(&self, window: &mut Window, cx: &mut App, in_grid: bool) -> AnyElement {
+    fn render(&self, window: &mut Window, cx: &mut App) -> AnyElement {
         v_flex()
-            .w_full()
             .gap_3()
-            .when(self.wide && in_grid, |this| this.col_span_full())
             .when_some(self.title.clone(), |this, title| {
                 this.child(
                     div()
@@ -227,9 +216,6 @@ impl SettingGroup {
 pub struct SettingPage {
     title: SharedString,
     groups: Vec<SettingGroup>,
-    /// Lay the cards out in a grid when the window is wide enough. Off for a
-    /// page whose cards are one long list.
-    grid: bool,
 }
 
 impl SettingPage {
@@ -237,14 +223,7 @@ impl SettingPage {
         Self {
             title: title.into(),
             groups: Vec::new(),
-            grid: true,
         }
-    }
-
-    /// Opt out of the two-column layout, for pages that read top to bottom.
-    pub fn single_column(mut self) -> Self {
-        self.grid = false;
-        self
     }
 
     pub fn group(mut self, group: SettingGroup) -> Self {
@@ -365,28 +344,16 @@ impl RenderOnce for Settings {
                 }
             });
 
-        // Two columns of cards once the window can hold them; one below that.
-        // The threshold is about what a card needs to keep its label and its
-        // control on one line without the label wrapping.
-        let page = self.pages.get(active);
-        // A lone card in a two-column grid would sit at half width with a
-        // gutter beside it, which reads as a mistake, so a page needs at least
-        // two cards before the grid is worth using.
-        let two_columns = page.is_some_and(|page| page.grid && page.groups.len() > 1)
-            && window.viewport_size().width >= px(1040.);
-        let groups = page
+        let groups = self
+            .pages
+            .get(active)
             .map(|page| {
                 page.groups
                     .iter()
-                    .map(|g| g.render(window, cx, two_columns))
+                    .map(|g| g.render(window, cx))
                     .collect::<Vec<_>>()
             })
             .unwrap_or_default();
-        let body = if two_columns {
-            div().w_full().grid().grid_cols(2).gap_6()
-        } else {
-            v_flex().w_full().gap_6()
-        };
 
         v_flex()
             .id(self.id.clone())
@@ -407,7 +374,8 @@ impl RenderOnce for Settings {
                             .overflow_y_scroll()
                             .track_scroll(&scroll)
                             .p_4()
-                            .child(body.children(groups)),
+                            .gap_6()
+                            .children(groups),
                     )
                     .vertical_scrollbar(&scroll),
             )

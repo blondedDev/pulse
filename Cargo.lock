@@ -595,7 +595,7 @@ dependencies = [
 
 [[package]]
 name = "audio_common"
-version = "5.3.0"
+version = "5.3.1"
 dependencies = [
  "anyhow",
  "thiserror 2.0.19",
@@ -603,7 +603,7 @@ dependencies = [
 
 [[package]]
 name = "audio_decoder"
-version = "5.3.0"
+version = "5.3.1"
 dependencies = [
  "anyhow",
  "ape-decoder",
@@ -616,7 +616,7 @@ dependencies = [
 
 [[package]]
 name = "audio_engine"
-version = "5.3.0"
+version = "5.3.1"
 dependencies = [
  "anyhow",
  "audio_common",
@@ -630,7 +630,7 @@ dependencies = [
 
 [[package]]
 name = "audio_output"
-version = "5.3.0"
+version = "5.3.1"
 dependencies = [
  "alsa",
  "anyhow",
@@ -1505,7 +1505,7 @@ dependencies = [
 
 [[package]]
 name = "cover_search"
-version = "5.3.0"
+version = "5.3.1"
 dependencies = [
  "log",
  "rstest",
@@ -1665,7 +1665,7 @@ dependencies = [
 
 [[package]]
 name = "cue_parser"
-version = "5.3.0"
+version = "5.3.1"
 dependencies = [
  "rstest",
  "thiserror 2.0.19",
@@ -1731,7 +1731,7 @@ dependencies = [
 
 [[package]]
 name = "diagnostics"
-version = "5.3.0"
+version = "5.3.1"
 dependencies = [
  "flume",
  "humantime",
@@ -1804,7 +1804,7 @@ dependencies = [
 
 [[package]]
 name = "discord"
-version = "5.3.0"
+version = "5.3.1"
 dependencies = [
  "cover_search",
  "discord-rich-presence",
@@ -1891,7 +1891,7 @@ checksum = "75b325c5dbd37f80359721ad39aca5a29fb04c89279657cffdda8736d0c0b9d2"
 
 [[package]]
 name = "dsd"
-version = "5.3.0"
+version = "5.3.1"
 dependencies = [
  "rstest",
  "thiserror 2.0.19",
@@ -4418,7 +4418,7 @@ dependencies = [
 
 [[package]]
 name = "lyrics"
-version = "5.3.0"
+version = "5.3.1"
 dependencies = [
  "anyhow",
  "rstest",
@@ -4529,7 +4529,7 @@ dependencies = [
 
 [[package]]
 name = "media_integration"
-version = "5.3.0"
+version = "5.3.1"
 dependencies = [
  "flume",
  "log",
@@ -4640,7 +4640,7 @@ dependencies = [
 
 [[package]]
 name = "music_indexer"
-version = "5.3.0"
+version = "5.3.1"
 dependencies = [
  "anyhow",
  "cue_parser",
@@ -4655,7 +4655,7 @@ dependencies = [
 
 [[package]]
 name = "music_library"
-version = "5.3.0"
+version = "5.3.1"
 dependencies = [
  "dirs 6.0.0",
  "flate2",
@@ -5985,7 +5985,7 @@ checksum = "1d8f70e07b9c3962945a74e59ca1c511bba65b6419468acc217c457d93f3c740"
 
 [[package]]
 name = "pulse"
-version = "5.3.0"
+version = "5.3.1"
 dependencies = [
  "anyhow",
  "audio_engine",
@@ -6025,7 +6025,7 @@ dependencies = [
 
 [[package]]
 name = "pulse_remote"
-version = "5.3.0"
+version = "5.3.1"
 dependencies = [
  "anyhow",
  "axum",
@@ -7947,7 +7947,7 @@ dependencies = [
 
 [[package]]
 name = "tag_writer"
-version = "5.3.0"
+version = "5.3.1"
 dependencies = [
  "anyhow",
  "lofty",
@@ -8492,7 +8492,7 @@ dependencies = [
 
 [[package]]
 name = "ui_components"
-version = "5.3.0"
+version = "5.3.1"
 dependencies = [
  "gpui-component",
  "gpui-pre",
@@ -8500,7 +8500,7 @@ dependencies = [
 
 [[package]]
 name = "ui_resources"
-version = "5.3.0"
+version = "5.3.1"
 dependencies = [
  "anyhow",
  "dirs 6.0.0",

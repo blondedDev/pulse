@@ -101,7 +101,7 @@ fn on_engine_event(cx: &mut App, state: &Rc<RefCell<BridgeState>>, event: &Engin
                     st.anchor_pos = Duration::ZERO;
                     st.anchor_wall = Instant::now();
                     if playing {
-                        send_current(&st, Duration::ZERO);
+                        send_current(cx, &st, Duration::ZERO);
                     } else if !was_playing && let Some(handle) = &st.handle {
                         handle.clear();
                     }
@@ -115,12 +115,17 @@ fn on_engine_event(cx: &mut App, state: &Rc<RefCell<BridgeState>>, event: &Engin
             st.playing = true;
             st.anchor_pos = pos;
             st.anchor_wall = Instant::now();
-            send_current(&st, pos);
+            send_current(cx, &st, pos);
         }
         EngineEvent::Paused => {
             let mut st = state.borrow_mut();
             st.playing = false;
-            if let Some(handle) = &st.handle {
+            // Either clear the activity or leave it up saying "Paused"; which
+            // one is a setting, because both are defensible.
+            if cx.global::<SettingsStore>().discord_presence().keep_on_pause {
+                let pos = position(cx);
+                send_current(cx, &st, pos);
+            } else if let Some(handle) = &st.handle {
                 handle.clear();
             }
         }
@@ -135,7 +140,7 @@ fn on_engine_event(cx: &mut App, state: &Rc<RefCell<BridgeState>>, event: &Engin
             if drift > SEEK_THRESHOLD {
                 st.anchor_pos = *p;
                 st.anchor_wall = now;
-                send_current(&st, *p);
+                send_current(cx, &st, *p);
             }
         }
         EngineEvent::TrackEnded | EngineEvent::Stopped if !has_current_track(cx) => {
@@ -146,16 +151,19 @@ fn on_engine_event(cx: &mut App, state: &Rc<RefCell<BridgeState>>, event: &Engin
     }
 }
 
-fn send_current(st: &BridgeState, position: Duration) {
+fn send_current(cx: &App, st: &BridgeState, position: Duration) {
     let (Some(meta), Some(handle)) = (st.current.as_ref(), st.handle.as_ref()) else {
         return;
     };
+    let settings = cx.global::<SettingsStore>().discord_presence().clone();
     handle.set(Presence {
         artist: meta.artist.clone(),
         title: meta.title.clone(),
         album: meta.album.clone(),
         duration: meta.duration,
         started_at: unix_now() - position.as_secs() as i64,
+        paused: !st.playing,
+        settings,
     });
 }
 
@@ -192,7 +200,7 @@ fn seed(cx: &mut App, state: &Rc<RefCell<BridgeState>>) {
     st.anchor_pos = position;
     st.anchor_wall = Instant::now();
     if playing {
-        send_current(&st, position);
+        send_current(cx, &st, position);
     }
 }
 

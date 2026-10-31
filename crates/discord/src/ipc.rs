@@ -145,29 +145,10 @@ impl Worker {
         if now.duration_since(self.last_apply) < MIN_INTERVAL {
             return;
         }
-        let result = match &self.desired {
-            Some(p) => {
-                let art = self.art.resolve(&p.artist, p.album.as_deref());
-                let mut assets = Assets::new().small_image("play").small_text("Playing");
-                if let Some(url) = art.as_deref() {
-                    assets = assets.large_image(url);
-                    if let Some(album) = p.album.as_deref() {
-                        assets = assets.large_text(album);
-                    }
-                }
-                let (start, end) = spans(p);
-                let mut ts = Timestamps::new().start(start);
-                if let Some(end) = end {
-                    ts = ts.end(end);
-                }
-                let activity = Activity::new()
-                    .activity_type(ActivityType::Listening)
-                    .details(p.title.as_str())
-                    .state(p.artist.as_str())
-                    .assets(assets)
-                    .timestamps(ts);
-                self.client.set_activity(activity)
-            }
+        // Cloned so the art cache can be borrowed mutably while the desired
+        // presence is still in hand; a presence is a few strings.
+        let result = match self.desired.clone() {
+            Some(p) => self.build_and_set_activity(&p),
             None => self.client.clear_activity(),
         };
         match result {
@@ -181,6 +162,55 @@ impl Worker {
             }
         }
     }
+
+    fn build_and_set_activity(
+        &mut self,
+        p: &Presence,
+    ) -> Result<(), discord_rich_presence::error::Error> {
+        let s = &p.settings;
+
+        let mut activity = Activity::new().activity_type(ActivityType::Listening);
+
+        if s.show_title {
+            activity = activity.details(p.title.as_str());
+        }
+        if s.show_artist {
+            activity = activity.state(p.artist.as_str());
+        }
+
+        let (small_image, small_text) = if p.paused {
+            ("pause", "Paused")
+        } else {
+            ("play", "Playing")
+        };
+        let mut assets = Assets::new()
+            .small_image(small_image)
+            .small_text(small_text);
+        if s.show_cover {
+            if let Some(url) = self.art.resolve(&p.artist, p.album.as_deref()) {
+                assets = assets.large_image(url);
+                if s.show_album && let Some(album) = p.album.as_deref() {
+                    assets = assets.large_text(album);
+                }
+            }
+        } else if s.show_album && let Some(album) = p.album.as_deref() {
+            assets = assets.large_text(album);
+        }
+        activity = activity.assets(assets);
+
+        // A paused timer would keep counting up, which is a lie, so the
+        // timestamps are dropped rather than frozen.
+        if s.show_timestamps && !p.paused {
+            let (start, end) = spans(p);
+            let mut ts = Timestamps::new().start(start);
+            if let Some(end) = end {
+                ts = ts.end(end);
+            }
+            activity = activity.timestamps(ts);
+        }
+
+        self.client.set_activity(activity)
+    }
 }
 
 fn spans(p: &Presence) -> (i64, Option<i64>) {
@@ -191,6 +221,7 @@ fn spans(p: &Presence) -> (i64, Option<i64>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::PresenceSettings;
 
     #[test]
     fn end_span_present_only_with_known_duration() {
@@ -200,6 +231,8 @@ mod tests {
             album: Some("Alb".to_string()),
             duration: Duration::from_secs(180),
             started_at: 1000,
+            paused: false,
+            settings: PresenceSettings::default(),
         };
         assert_eq!(spans(&known), (1000, Some(1180)));
 

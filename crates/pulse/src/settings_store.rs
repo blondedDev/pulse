@@ -508,6 +508,9 @@ pub struct UserSettings {
     _legacy_dlna_servers: Option<Vec<serde_json::Value>>,
     #[serde(default)]
     pub discord_enabled: bool,
+    /// What to include in the Discord Rich Presence activity.
+    #[serde(default)]
+    pub discord_presence: discord::PresenceSettings,
     #[serde(default)]
     pub font_scale: FontScale,
     #[serde(default = "default_lyrics_font_size")]
@@ -580,6 +583,7 @@ impl Default for UserSettings {
             _legacy_jellyfin_servers: None,
             _legacy_dlna_servers: None,
             discord_enabled: false,
+            discord_presence: discord::PresenceSettings::default(),
             font_scale: FontScale::default(),
             lyrics_font_size: LYRICS_FONT_SIZE_DEFAULT,
             lyrics_karaoke_fill: true,
@@ -1019,6 +1023,15 @@ impl SettingsStore {
 
     pub fn set_discord_enabled(&mut self, enabled: bool) -> anyhow::Result<()> {
         self.settings.discord_enabled = enabled;
+        self.save()
+    }
+
+    pub fn discord_presence(&self) -> &discord::PresenceSettings {
+        &self.settings.discord_presence
+    }
+
+    pub fn set_discord_presence(&mut self, presence: discord::PresenceSettings) -> anyhow::Result<()> {
+        self.settings.discord_presence = presence;
         self.save()
     }
 
@@ -1714,6 +1727,7 @@ mod tests {
             start_offset_ms: 0,
         };
         let settings = UserSettings {
+            discord_presence: discord::PresenceSettings::default(),
             rewind_enabled: true,
             albums_enabled: false,
             artists_enabled: true,

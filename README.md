@@ -46,6 +46,13 @@ service.
 priority and trashes the rest, daily rotated database backups with one-click
 restore, an integrity report, and a portable export that carries its own data.
 
+**Discord Rich Presence** — your profile shows what is playing: title, artist,
+album as the cover's tooltip, cover art looked up per album and cached, and a
+timer that knows where you are in the track. Every one of those is a switch, so
+the activity can be as quiet or as detailed as you like, and it can either clear
+when you pause or stay up marked as paused. It needs a Discord application ID at
+build time — see [Discord Rich Presence](#discord-rich-presence).
+
 **Phone remote** — the same library on your phone. See [Phone remote](#phone-remote).
 
 ## Phone remote
@@ -125,6 +132,34 @@ There is **no account system**: one token, shared by every device, or nothing at
 all. The server trusts the network it is on, which is why it is off by default
 and why the address it advertises is your LAN or your tailnet. Do not
 port-forward it to the internet.
+
+## Discord Rich Presence
+
+Off until you turn it on, and then as detailed or as quiet as you want. The
+activity is built from your library, not from a service:
+
+| Setting | Default |
+|---|---|
+| Title on the activity | on |
+| Artist | on |
+| Album, as the cover's tooltip | on |
+| Cover art | off — one iTunes lookup per album, then cached |
+| Time remaining | on |
+| Stay up when paused | off — otherwise the activity clears |
+
+The cover has to come from a URL, because Discord cannot display an image that
+only exists on your disk; that is the one reason the app makes a network request
+here, which is why it is off by default.
+
+Rich Presence needs an application id, which Discord issues per app and which
+has to be compiled in:
+
+1. Create an application at [discord.com/developers](https://discord.com/developers/applications) — the name is what friends see, so call it Pulse.
+2. Copy its **Application ID**.
+3. Put `DISCORD_CLIENT_ID=<the id>` in a `.env` file at the repository root.
+4. Rebuild. A build without it hides the switches and says so on the page.
+
+Nothing else is uploaded: Discord only receives the strings it displays.
 
 ## Offline by default
 

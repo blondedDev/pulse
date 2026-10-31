@@ -5,8 +5,8 @@ use gpui::{
     Styled, Window, actions, div, img, px,
 };
 use gpui_component::{
-    Disableable, Icon, IconName, Selectable, Sizable, WindowExt,
-    button::{Button, ButtonGroup, ButtonVariants},
+    Disableable, Icon, IconName, Sizable, WindowExt,
+    button::{Button, ButtonVariants},
     dialog::{Cancel, Confirm, DialogFooter},
     h_flex,
     input::{Input, InputState},
@@ -95,8 +95,17 @@ pub fn build_settings_pages(
     // Everything that reaches the network lives on this one page, and every
     // switch on it starts off. The rest of the app is fully usable without it.
     let mut online = SettingPage::new(tr().settings_online.clone()).group(online_lyrics_group());
+    // Shown either way. Without an application id the switches would do
+    // nothing, so that build gets a card saying why instead of a card that is
+    // missing with no explanation.
     if discord::is_available() {
         online = online.group(discord_group());
+    } else {
+        online = online.group(
+            SettingGroup::new()
+                .title(tr().discord_group.clone())
+                .description(tr().discord_needs_client_id.clone()),
+        );
     }
     online = online.group(remote_group(remote_port_input));
     let online_ix = pages.len();
@@ -105,7 +114,7 @@ pub fn build_settings_pages(
     let library = pages.len();
     pages.push(
         SettingPage::new(tr().settings_library.clone())
-            .group(local_folders_group(library_page.sources.clone()))
+            .group(local_folders_group(library_page.sources.clone()).wide())
             .group(backups_group())
             .group(portable_group()),
     );
@@ -263,40 +272,22 @@ fn appearance_group(
             tr().font_size.clone(),
             SettingField::render(|_window, cx: &mut App| {
                 let current = cx.global::<SettingsStore>().font_scale();
-                h_flex().items_center().justify_end().child(
-                    ButtonGroup::new("font-size-group")
-                        .small()
-                        .child(
-                            Button::new("font-small")
-                                .label(tr().font_size_small.clone())
-                                .selected(current == FontScale::Small),
-                        )
-                        .child(
-                            Button::new("font-medium")
-                                .label(tr().font_size_medium.clone())
-                                .selected(current == FontScale::Medium),
-                        )
-                        .child(
-                            Button::new("font-large")
-                                .label(tr().font_size_large.clone())
-                                .selected(current == FontScale::Large),
-                        )
-                        .on_click(|clicks: &Vec<usize>, _, cx| {
-                            let Some(&ix) = clicks.first() else {
-                                return;
-                            };
-                            let scale = match ix {
-                                0 => FontScale::Small,
-                                2 => FontScale::Large,
-                                _ => FontScale::Medium,
-                            };
-                            if let Err(e) = cx.global_mut::<SettingsStore>().set_font_scale(scale) {
-                                notify_save_error(cx, e);
-                            }
-                            apply_font_scale(scale, cx);
-                            cx.refresh_windows();
-                        }),
-                )
+                h_flex().items_center().justify_end().child(enum_menu(
+                    "font-size-menu",
+                    current,
+                    &[
+                        (FontScale::Small, tr().font_size_small.clone()),
+                        (FontScale::Medium, tr().font_size_medium.clone()),
+                        (FontScale::Large, tr().font_size_large.clone()),
+                    ],
+                    |scale, cx| {
+                        if let Err(e) = cx.global_mut::<SettingsStore>().set_font_scale(scale) {
+                            notify_save_error(cx, e);
+                        }
+                        apply_font_scale(scale, cx);
+                        cx.refresh_windows();
+                    },
+                ))
             }),
         )
         .description(tr().font_size_desc.clone()),
@@ -307,40 +298,20 @@ fn appearance_group(
             tr().blur_background.clone(),
             SettingField::render(|_window, cx: &mut App| {
                 let current = cx.global::<SettingsStore>().blur_background();
-                h_flex().items_center().justify_end().child(
-                    ButtonGroup::new("blur-background-group")
-                        .small()
-                        .child(
-                            Button::new("blur-off")
-                                .label(tr().blur_background_off.clone())
-                                .selected(current == BlurBackground::Off),
-                        )
-                        .child(
-                            Button::new("blur-cover")
-                                .label(tr().blur_background_cover.clone())
-                                .selected(current == BlurBackground::CoverView),
-                        )
-                        .child(
-                            Button::new("blur-all")
-                                .label(tr().blur_background_all.clone())
-                                .selected(current == BlurBackground::AllViews),
-                        )
-                        .on_click(|clicks: &Vec<usize>, _, cx| {
-                            let Some(&ix) = clicks.first() else {
-                                return;
-                            };
-                            let mode = match ix {
-                                0 => BlurBackground::Off,
-                                2 => BlurBackground::AllViews,
-                                _ => BlurBackground::CoverView,
-                            };
-                            if let Err(e) =
-                                cx.global_mut::<SettingsStore>().set_blur_background(mode)
-                            {
-                                notify_save_error(cx, e);
-                            }
-                        }),
-                )
+                h_flex().items_center().justify_end().child(enum_menu(
+                    "blur-background-menu",
+                    current,
+                    &[
+                        (BlurBackground::Off, tr().blur_background_off.clone()),
+                        (BlurBackground::CoverView, tr().blur_background_cover.clone()),
+                        (BlurBackground::AllViews, tr().blur_background_all.clone()),
+                    ],
+                    |mode, cx| {
+                        if let Err(e) = cx.global_mut::<SettingsStore>().set_blur_background(mode) {
+                            notify_save_error(cx, e);
+                        }
+                    },
+                ))
             }),
         )
         .description(tr().blur_background_desc.clone()),
@@ -1080,6 +1051,113 @@ fn discord_group() -> SettingGroup {
             )
             .description(tr().discord_share_desc.clone()),
         )
+        .item(discord_switch(
+            "discord-show-title",
+            tr().discord_show_title.clone(),
+            tr().discord_show_title_desc.clone(),
+            |s| &mut s.show_title,
+        ))
+        .item(discord_switch(
+            "discord-show-artist",
+            tr().discord_show_artist.clone(),
+            tr().discord_show_artist_desc.clone(),
+            |s| &mut s.show_artist,
+        ))
+        .item(discord_switch(
+            "discord-show-cover",
+            tr().discord_show_cover.clone(),
+            tr().discord_show_cover_desc.clone(),
+            |s| &mut s.show_cover,
+        ))
+        .item(discord_switch(
+            "discord-show-album",
+            tr().discord_show_album.clone(),
+            tr().discord_show_album_desc.clone(),
+            |s| &mut s.show_album,
+        ))
+        .item(discord_switch(
+            "discord-show-timestamps",
+            tr().discord_show_timestamps.clone(),
+            tr().discord_show_timestamps_desc.clone(),
+            |s| &mut s.show_timestamps,
+        ))
+        .item(discord_switch(
+            "discord-keep-paused",
+            tr().discord_keep_paused.clone(),
+            tr().discord_keep_paused_desc.clone(),
+            |s| &mut s.keep_on_pause,
+        ))
+}
+
+/// One boolean of `DiscordPresenceSettings` as a switch row.
+///
+/// The six rows differ only in which field they flip, so they go through here
+/// instead of six copies of the same closure. `field` is a projection rather
+/// than an index so a renamed field is a compile error, not a wrong switch.
+fn discord_switch(
+    id: &'static str,
+    label: SharedString,
+    description: SharedString,
+    field: fn(&mut discord::PresenceSettings) -> &mut bool,
+) -> SettingItem {
+    SettingItem::new(
+        label,
+        SettingField::render(move |_window, cx: &mut App| {
+            let settings = cx.global::<SettingsStore>().discord_presence().clone();
+            let checked = *field(&mut settings.clone());
+            h_flex().items_center().justify_end().child(
+                Switch::new(id).checked(checked).on_click(move |new_val, _, cx| {
+                    let mut next = cx.global::<SettingsStore>().discord_presence().clone();
+                    *field(&mut next) = *new_val;
+                    if let Err(e) = cx
+                        .global_mut::<SettingsStore>()
+                        .set_discord_presence(next)
+                    {
+                        notify_save_error(cx, e);
+                    }
+                }),
+            )
+        }),
+    )
+    .description(description)
+}
+
+/// A setting that picks one of a few named values, shown as a menu.
+///
+/// These were button groups: a row of labels with one highlighted. At three or
+/// four options that is a wall of text competing with the label beside it, and
+/// the row stops fitting at any sensible window width. A menu shows only the
+/// current value and hides the rest.
+fn enum_menu<T: Copy + PartialEq + 'static>(
+    id: &'static str,
+    current: T,
+    options: &[(T, SharedString)],
+    apply: impl Fn(T, &mut App) + 'static,
+) -> impl IntoElement {
+    let label = options
+        .iter()
+        .find(|(value, _)| *value == current)
+        .map(|(_, label)| label.clone())
+        .unwrap_or_default();
+    let options = options.to_vec();
+    let apply = std::rc::Rc::new(apply);
+    Button::new(id)
+        .small()
+        .icon(Icon::default().path("icons/chevron-down.svg"))
+        .label(label)
+        .dropdown_menu(move |menu, _window, _cx| {
+            let mut menu = menu.min_w(px(190.));
+            for (value, text) in options.clone() {
+                let checked = value == current;
+                let apply = apply.clone();
+                menu = menu.item(
+                    PopupMenuItem::new(text)
+                        .checked(checked)
+                        .on_click(move |_, _, cx| apply(value, cx)),
+                );
+            }
+            menu
+        })
 }
 
 fn now_playing_group() -> SettingGroup {
@@ -1090,47 +1168,24 @@ fn now_playing_group() -> SettingGroup {
                 tr().now_playing_details.clone(),
                 SettingField::render(|_window, cx: &mut App| {
                     let current = cx.global::<SettingsStore>().now_playing_details();
-                    h_flex().items_center().justify_end().child(
-                        ButtonGroup::new("now-playing-details-group")
-                            .small()
-                            .child(
-                                Button::new("now-playing-details-specs")
-                                    .label(tr().now_playing_details_specs.clone())
-                                    .selected(current == NowPlayingDetails::Specs),
-                            )
-                            .child(
-                                Button::new("now-playing-details-year")
-                                    .label(tr().album_year.clone())
-                                    .selected(current == NowPlayingDetails::Year),
-                            )
-                            .child(
-                                Button::new("now-playing-details-album")
-                                    .label(tr().now_playing_details_album.clone())
-                                    .selected(current == NowPlayingDetails::Album),
-                            )
-                            .child(
-                                Button::new("now-playing-details-hidden")
-                                    .label(tr().albums_artist_hidden.clone())
-                                    .selected(current == NowPlayingDetails::Hidden),
-                            )
-                            .on_click(|clicks: &Vec<usize>, _, cx| {
-                                let Some(&ix) = clicks.first() else {
-                                    return;
-                                };
-                                let details = match ix {
-                                    1 => NowPlayingDetails::Year,
-                                    2 => NowPlayingDetails::Album,
-                                    3 => NowPlayingDetails::Hidden,
-                                    _ => NowPlayingDetails::Specs,
-                                };
-                                if let Err(e) = cx
-                                    .global_mut::<SettingsStore>()
-                                    .set_now_playing_details(details)
-                                {
-                                    notify_save_error(cx, e);
-                                }
-                            }),
-                    )
+                    h_flex().items_center().justify_end().child(enum_menu(
+                        "now-playing-details-menu",
+                        current,
+                        &[
+                            (NowPlayingDetails::Specs, tr().now_playing_details_specs.clone()),
+                            (NowPlayingDetails::Year, tr().album_year.clone()),
+                            (NowPlayingDetails::Album, tr().now_playing_details_album.clone()),
+                            (NowPlayingDetails::Hidden, tr().albums_artist_hidden.clone()),
+                        ],
+                        |details, cx| {
+                            if let Err(e) = cx
+                                .global_mut::<SettingsStore>()
+                                .set_now_playing_details(details)
+                            {
+                                notify_save_error(cx, e);
+                            }
+                        },
+                    ))
                 }),
             )
             .description(tr().now_playing_details_desc.clone()),
@@ -1142,35 +1197,22 @@ fn artists_grouping_item() -> SettingItem {
         tr().artists_group_by_tag.clone(),
         SettingField::render(|_window, cx: &mut App| {
             let current = cx.global::<SettingsStore>().artists_grouping();
-            h_flex().items_center().justify_end().child(
-                ButtonGroup::new("artists-grouping-group")
-                    .small()
-                    .child(
-                        Button::new("artists-grouping-track-artist")
-                            .label("artist")
-                            .selected(current == ArtistGrouping::TrackArtist),
-                    )
-                    .child(
-                        Button::new("artists-grouping-album-artist")
-                            .label("album artist")
-                            .selected(current == ArtistGrouping::AlbumArtist),
-                    )
-                    .on_click(|clicks: &Vec<usize>, _, cx| {
-                        let Some(&ix) = clicks.first() else {
-                            return;
-                        };
-                        let grouping = match ix {
-                            1 => ArtistGrouping::AlbumArtist,
-                            _ => ArtistGrouping::TrackArtist,
-                        };
-                        if let Err(e) = cx
-                            .global_mut::<SettingsStore>()
-                            .set_artists_grouping(grouping)
-                        {
-                            notify_save_error(cx, e);
-                        }
-                    }),
-            )
+            h_flex().items_center().justify_end().child(enum_menu(
+                "artists-grouping-menu",
+                current,
+                &[
+                    (ArtistGrouping::TrackArtist, "artist".into()),
+                    (ArtistGrouping::AlbumArtist, "album artist".into()),
+                ],
+                |grouping, cx| {
+                    if let Err(e) = cx
+                        .global_mut::<SettingsStore>()
+                        .set_artists_grouping(grouping)
+                    {
+                        notify_save_error(cx, e);
+                    }
+                },
+            ))
         }),
     )
 }
@@ -1184,34 +1226,21 @@ fn library_pages_group(layout: AlbumsLayout) -> SettingGroup {
                 tr().albums_layout.clone(),
                 SettingField::render(|_window, cx: &mut App| {
                     let current = cx.global::<SettingsStore>().albums_layout();
-                    h_flex().items_center().justify_end().child(
-                        ButtonGroup::new("albums-layout-group")
-                            .small()
-                            .child(
-                                Button::new("albums-layout-list")
-                                    .label(tr().albums_layout_list.clone())
-                                    .selected(current == AlbumsLayout::List),
-                            )
-                            .child(
-                                Button::new("albums-layout-grid")
-                                    .label(tr().albums_layout_grid.clone())
-                                    .selected(current == AlbumsLayout::Grid),
-                            )
-                            .on_click(|clicks: &Vec<usize>, _, cx| {
-                                let Some(&ix) = clicks.first() else {
-                                    return;
-                                };
-                                let layout = match ix {
-                                    1 => AlbumsLayout::Grid,
-                                    _ => AlbumsLayout::List,
-                                };
-                                if let Err(e) =
-                                    cx.global_mut::<SettingsStore>().set_albums_layout(layout)
-                                {
-                                    notify_save_error(cx, e);
-                                }
-                            }),
-                    )
+                    h_flex().items_center().justify_end().child(enum_menu(
+                        "albums-layout-menu",
+                        current,
+                        &[
+                            (AlbumsLayout::List, tr().albums_layout_list.clone()),
+                            (AlbumsLayout::Grid, tr().albums_layout_grid.clone()),
+                        ],
+                        |layout, cx| {
+                            if let Err(e) =
+                                cx.global_mut::<SettingsStore>().set_albums_layout(layout)
+                            {
+                                notify_save_error(cx, e);
+                            }
+                        },
+                    ))
                 }),
             )
             .description(tr().albums_layout_desc.clone()),
@@ -1223,41 +1252,23 @@ fn library_pages_group(layout: AlbumsLayout) -> SettingGroup {
                 tr().artist_name.clone(),
                 SettingField::render(|_window, cx: &mut App| {
                     let current = cx.global::<SettingsStore>().albums_artist_display();
-                    h_flex().items_center().justify_end().child(
-                        ButtonGroup::new("albums-artist-group")
-                            .small()
-                            .child(
-                                Button::new("albums-artist-inline")
-                                    .label(tr().albums_artist_inline.clone())
-                                    .selected(current == AlbumsArtistDisplay::Inline),
-                            )
-                            .child(
-                                Button::new("albums-artist-column")
-                                    .label(tr().albums_artist_column.clone())
-                                    .selected(current == AlbumsArtistDisplay::Column),
-                            )
-                            .child(
-                                Button::new("albums-artist-hidden")
-                                    .label(tr().albums_artist_hidden.clone())
-                                    .selected(current == AlbumsArtistDisplay::Hidden),
-                            )
-                            .on_click(|clicks: &Vec<usize>, _, cx| {
-                                let Some(&ix) = clicks.first() else {
-                                    return;
-                                };
-                                let display = match ix {
-                                    1 => AlbumsArtistDisplay::Column,
-                                    2 => AlbumsArtistDisplay::Hidden,
-                                    _ => AlbumsArtistDisplay::Inline,
-                                };
-                                if let Err(e) = cx
-                                    .global_mut::<SettingsStore>()
-                                    .set_albums_artist_display(display)
-                                {
-                                    notify_save_error(cx, e);
-                                }
-                            }),
-                    )
+                    h_flex().items_center().justify_end().child(enum_menu(
+                        "albums-artist-menu",
+                        current,
+                        &[
+                            (AlbumsArtistDisplay::Inline, tr().albums_artist_inline.clone()),
+                            (AlbumsArtistDisplay::Column, tr().albums_artist_column.clone()),
+                            (AlbumsArtistDisplay::Hidden, tr().albums_artist_hidden.clone()),
+                        ],
+                        |display, cx| {
+                            if let Err(e) = cx
+                                .global_mut::<SettingsStore>()
+                                .set_albums_artist_display(display)
+                            {
+                                notify_save_error(cx, e);
+                            }
+                        },
+                    ))
                 }),
             )
             .description(tr().albums_artist_desc.clone()),

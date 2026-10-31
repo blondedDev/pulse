@@ -1153,6 +1153,8 @@ fn discord_switch(
                     {
                         notify_save_error(cx, e);
                     }
+                    // Take effect on the track that is playing, not the next one.
+                    crate::discord_bridge::refresh(cx);
                 }),
             )
         }),

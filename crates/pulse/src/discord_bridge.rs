@@ -69,6 +69,36 @@ pub fn set_enabled(cx: &mut App, enabled: bool) {
     }
 }
 
+/// Re-send the activity for whatever is playing now.
+///
+/// A switch in Settings only changes a stored field. Without this, flipping one
+/// would not show up until the next track, pause or seek, which reads as a
+/// switch that does nothing — the most likely thing to be tried first is the
+/// cover art, and waiting a whole track for it to appear looks broken.
+pub fn refresh(cx: &App) {
+    let Some(state) = cx.try_global::<DiscordService>().map(|s| s.state.clone()) else {
+        return;
+    };
+    if !is_active(cx) {
+        return;
+    }
+    let st = state.borrow();
+    if st.current.is_none() {
+        return;
+    }
+    if !st.playing {
+        // Paused: the activity is already cleared unless the user asked to keep
+        // it, in which case it is re-sent marked as paused. Sending it here
+        // unconditionally would put it back up for someone who did not ask.
+        if cx.global::<SettingsStore>().discord_presence().keep_on_pause {
+            send_current(cx, &st, st.anchor_pos);
+        }
+        return;
+    }
+    let position = st.anchor_pos + Instant::now().saturating_duration_since(st.anchor_wall);
+    send_current(cx, &st, position);
+}
+
 pub fn finalize_on_quit(cx: &mut App) {
     let Some(state) = cx.try_global::<DiscordService>().map(|s| s.state.clone()) else {
         return;

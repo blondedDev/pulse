@@ -274,7 +274,7 @@ pub static EN: Strings = lang! {
     discord_show_album: "Album",
     discord_show_album_desc: "The album name, as the tooltip on the cover art.",
     discord_show_cover: "Cover art",
-    discord_show_cover_desc: "Look the album up on iTunes and show its cover. One lookup per album, then cached.",
+    discord_show_cover_desc: "Show the album cover, looked up by the artist and album tags. One lookup per album, then cached. An album that cannot be matched shows no cover rather than the wrong one.",
     discord_show_timestamps: "Time remaining",
     discord_show_timestamps_desc: "Show how far into the track you are and how long is left.",
     discord_keep_paused: "Keep activity when paused",

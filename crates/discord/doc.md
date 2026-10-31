@@ -31,9 +31,19 @@ the guard against a switch in Settings that does nothing.
   card explaining that instead of switches that would be inert.
 - **Cover art is a URL, so it cannot be local.** Discord renders `large_image`
   as a key or a URL; there is no upload path from a desktop app. The lookup goes
-  through `cover_search`'s iTunes client, one request per artist+album, and the
-  answer is cached in `discord_art_cache.json` in the config directory —
-  including negative answers, so a missing cover costs one request ever.
+  through `cover_search`, one request per artist+album, and the answer is cached
+  in `discord_art_cache.json` in the config directory — including negative
+  answers, so a missing cover costs one request ever.
+- **A cover has to be the right album.** Taking the top search result put other
+  people's records on the profile: the first hit for an album title is often a
+  compilation, a deluxe edition or a different artist. Candidates are filtered
+  through `cover_search::matching`, the same comparison the library's own cover
+  fetch uses, and only a match is accepted. iTunes is asked first, MusicBrainz
+  second, and a miss is cached only when both answered — a network failure is
+  retried rather than remembered.
+- **The cache is versioned.** Entries written by a build that took the first
+  result were not verified, so `FORMAT_VERSION` discards them instead of
+  trusting them.
 - **A paused timer would lie.** Timestamps are dropped while paused rather than
   frozen at the pause point, because Discord counts up from `start` on its own
   clock. The small image/text flips to "Paused" instead.

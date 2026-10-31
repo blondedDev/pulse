@@ -89,7 +89,10 @@ fn drop_brackets(text: &str) -> String {
     out
 }
 
-fn artist_keys(artist: &str) -> Vec<String> {
+/// The artist string and each artist in it, normalised: `"Drake; Rick Ross"`
+/// yields `["drakerickross", "drake", "rickross"]`. Callers that want to accept
+/// a tag naming several artists compare these sets rather than the whole string.
+pub fn artist_keys(artist: &str) -> Vec<String> {
     let lower = artist.to_lowercase();
     let mut parts = vec![lower.clone()];
     for separator in ARTIST_SEPARATORS {

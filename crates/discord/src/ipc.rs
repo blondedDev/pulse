@@ -6,8 +6,8 @@ use discord_rich_presence::activity::{Activity, ActivityType, Assets, Timestamps
 use discord_rich_presence::{DiscordIpc, DiscordIpcClient};
 use flume::{Receiver, RecvTimeoutError, Sender};
 
-use crate::Presence;
 use crate::art::ArtCache;
+use crate::{Line, Presence, Timers, Verb};
 
 const TICK: Duration = Duration::from_secs(1);
 const MIN_INTERVAL: Duration = Duration::from_secs(5);
@@ -167,50 +167,90 @@ impl Worker {
         &mut self,
         p: &Presence,
     ) -> Result<(), discord_rich_presence::error::Error> {
-        let s = &p.settings;
-
-        let mut activity = Activity::new().activity_type(ActivityType::Listening);
-
-        if s.show_title {
-            activity = activity.details(p.title.as_str());
-        }
-        if s.show_artist {
-            activity = activity.state(p.artist.as_str());
-        }
-
-        let (small_image, small_text) = if p.paused {
-            ("pause", "Paused")
+        let art = if p.settings.show_cover {
+            self.art.resolve(&p.artist, p.album.as_deref())
         } else {
-            ("play", "Playing")
+            None
         };
-        let mut assets = Assets::new()
-            .small_image(small_image)
-            .small_text(small_text);
-        if s.show_cover {
-            if let Some(url) = self.art.resolve(&p.artist, p.album.as_deref()) {
-                assets = assets.large_image(url);
-                if s.show_album && let Some(album) = p.album.as_deref() {
-                    assets = assets.large_text(album);
-                }
-            }
-        } else if s.show_album && let Some(album) = p.album.as_deref() {
-            assets = assets.large_text(album);
-        }
-        activity = activity.assets(assets);
-
-        // A paused timer would keep counting up, which is a lie, so the
-        // timestamps are dropped rather than frozen.
-        if s.show_timestamps && !p.paused {
-            let (start, end) = spans(p);
-            let mut ts = Timestamps::new().start(start);
-            if let Some(end) = end {
-                ts = ts.end(end);
-            }
-            activity = activity.timestamps(ts);
-        }
-
-        self.client.set_activity(activity)
+        self.client.set_activity(activity_for(p, art.as_deref()))
     }
+}
+
+/// Build the activity Discord is shown.
+///
+/// Split out from the worker so it can be tested against the JSON that actually
+/// goes over the socket: `Activity`'s fields are private, but it serialises, and
+/// the serialised form is what Discord reads.
+fn activity_for(p: &Presence, cover: Option<&str>) -> Activity<'static> {
+    let s = &p.settings;
+
+    let kind = match s.verb {
+        Verb::Listening => ActivityType::Listening,
+        Verb::Playing => ActivityType::Playing,
+    };
+    let mut activity = Activity::new().activity_type(kind);
+
+    if let Some(text) = line(p, s.line_one) {
+        activity = activity.details(text);
+    }
+
+    // A paused activity has one job: say that it is paused. The second line is
+    // the only place that shows without an uploaded asset, so it is taken over
+    // when the user asked for that.
+    let second = if p.paused && s.paused_line {
+        Some(PAUSED.to_string())
+    } else {
+        line(p, s.line_two)
+    };
+    if let Some(text) = second {
+        activity = activity.state(text);
+    }
+
+    let (small_image, small_text) = if p.paused {
+        ("pause", PAUSED)
+    } else {
+        ("play", "Playing")
+    };
+    let mut assets = Assets::new()
+        .small_image(small_image)
+        .small_text(small_text);
+    if let Some(url) = cover {
+        assets = assets.large_image(url.to_string());
+        if let Some(text) = line(p, s.cover_text) {
+            assets = assets.large_text(text);
+        }
+    }
+    activity = activity.assets(assets);
+
+    // A paused timer would keep counting up, which is a lie, so the timestamps
+    // are dropped rather than frozen.
+    if !p.paused && s.timers != Timers::Off {
+        let (start, end) = spans(p);
+        let mut ts = Timestamps::new().start(start);
+        if s.timers == Timers::Progress && let Some(end) = end {
+            ts = ts.end(end);
+        }
+        activity = activity.timestamps(ts);
+    }
+
+    activity
+}
+
+const PAUSED: &str = "Paused";
+
+/// The text one line of the activity shows, or `None` to leave the line out.
+fn line(p: &Presence, content: Line) -> Option<String> {
+    match content {
+        Line::Off => None,
+        Line::Title => non_empty(&p.title),
+        Line::Artist => non_empty(&p.artist),
+        Line::Album => p.album.as_deref().and_then(non_empty),
+        Line::Year => p.year.map(|year| year.to_string()),
+    }
+}
+
+fn non_empty(value: &str) -> Option<String> {
+    (!value.trim().is_empty()).then(|| value.to_string())
 }
 
 fn spans(p: &Presence) -> (i64, Option<i64>) {
@@ -222,18 +262,121 @@ fn spans(p: &Presence) -> (i64, Option<i64>) {
 mod tests {
     use super::*;
     use crate::PresenceSettings;
+    use serde_json::Value;
 
-    #[test]
-    fn end_span_present_only_with_known_duration() {
-        let known = Presence {
-            artist: "A".to_string(),
-            title: "T".to_string(),
-            album: Some("Alb".to_string()),
+    fn presence() -> Presence {
+        Presence {
+            artist: "Drake".to_string(),
+            title: "Take Care".to_string(),
+            album: Some("Take Care".to_string()),
+            year: Some(2011),
             duration: Duration::from_secs(180),
             started_at: 1000,
             paused: false,
             settings: PresenceSettings::default(),
-        };
+        }
+    }
+
+    fn json(p: &Presence, cover: Option<&str>) -> Value {
+        serde_json::to_value(activity_for(p, cover)).unwrap()
+    }
+
+    #[test]
+    fn the_defaults_are_title_artist_and_a_progress_bar() {
+        let value = json(&presence(), None);
+        assert_eq!(value["details"], "Take Care");
+        assert_eq!(value["state"], "Drake");
+        assert_eq!(value["type"], 2, "Listening");
+        assert_eq!(value["timestamps"]["start"], 1000);
+        assert_eq!(value["timestamps"]["end"], 1180, "start + duration");
+    }
+
+    #[test]
+    fn a_line_set_to_off_is_left_out() {
+        let mut p = presence();
+        p.settings.line_two = Line::Off;
+        let value = json(&p, None);
+        assert!(value.get("state").is_none());
+        assert_eq!(value["details"], "Take Care");
+    }
+
+    #[test]
+    fn the_album_can_take_the_second_line() {
+        let mut p = presence();
+        p.settings.line_two = Line::Album;
+        assert_eq!(json(&p, None)["state"], "Take Care");
+
+        p.settings.line_one = Line::Year;
+        assert_eq!(json(&p, None)["details"], "2011");
+    }
+
+    #[test]
+    fn a_missing_field_leaves_its_line_out_rather_than_empty() {
+        let mut p = presence();
+        p.album = None;
+        p.settings.line_two = Line::Album;
+        assert!(json(&p, None).get("state").is_none());
+    }
+
+    #[test]
+    fn a_paused_activity_says_so_on_the_second_line() {
+        let mut p = presence();
+        p.paused = true;
+        let value = json(&p, None);
+        assert_eq!(value["details"], "Take Care");
+        assert_eq!(value["state"], "Paused");
+        assert!(
+            value.get("timestamps").is_none(),
+            "a paused timer would keep counting up"
+        );
+    }
+
+    #[test]
+    fn the_paused_line_can_be_turned_off() {
+        let mut p = presence();
+        p.paused = true;
+        p.settings.paused_line = false;
+        assert_eq!(json(&p, None)["state"], "Drake");
+    }
+
+    #[test]
+    fn the_clock_can_count_up_or_be_turned_off() {
+        let mut p = presence();
+        p.settings.timers = Timers::Elapsed;
+        let value = json(&p, None);
+        assert_eq!(value["timestamps"]["start"], 1000);
+        assert!(value["timestamps"].get("end").is_none());
+
+        p.settings.timers = Timers::Off;
+        assert!(json(&p, None).get("timestamps").is_none());
+    }
+
+    #[test]
+    fn the_verb_is_the_users_choice() {
+        let mut p = presence();
+        assert_eq!(json(&p, None)["type"], 2);
+        p.settings.verb = Verb::Playing;
+        assert_eq!(json(&p, None)["type"], 0);
+    }
+
+    #[test]
+    fn the_cover_carries_the_tooltip_and_only_when_there_is_a_cover() {
+        let value = json(&presence(), Some("https://img/512x512bb.jpg"));
+        assert_eq!(value["assets"]["large_image"], "https://img/512x512bb.jpg");
+        assert_eq!(value["assets"]["large_text"], "Take Care");
+
+        let mut p = presence();
+        p.settings.cover_text = Line::Off;
+        let value = json(&p, Some("https://img/512x512bb.jpg"));
+        assert!(value["assets"].get("large_text").is_none());
+
+        let value = json(&presence(), None);
+        assert!(value["assets"].get("large_image").is_none());
+    }
+
+    #[test]
+    fn end_span_present_only_with_known_duration() {
+        let known = presence();
         assert_eq!(spans(&known), (1000, Some(1180)));
 
         let unknown = Presence {

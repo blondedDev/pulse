@@ -22,6 +22,7 @@ struct CurrentMeta {
     artist: String,
     title: String,
     album: Option<String>,
+    year: Option<i32>,
     duration: Duration,
 }
 
@@ -190,6 +191,7 @@ fn send_current(cx: &App, st: &BridgeState, position: Duration) {
         artist: meta.artist.clone(),
         title: meta.title.clone(),
         album: meta.album.clone(),
+        year: meta.year,
         duration: meta.duration,
         started_at: unix_now() - position.as_secs() as i64,
         paused: !st.playing,
@@ -270,6 +272,7 @@ fn read_current_meta(cx: &App, duration: Duration) -> Option<CurrentMeta> {
         artist,
         title: track.title.clone(),
         album,
+        year: track.year,
         duration,
     })
 }

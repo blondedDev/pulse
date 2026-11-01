@@ -140,20 +140,23 @@ activity is built from your library, not from a service:
 
 | Setting | Default |
 |---|---|
-| Title on the activity | on |
-| Artist | on |
-| Album, as the cover's tooltip | on |
+| First line | title |
+| Second line | artist |
 | Cover art | off — one lookup per album, then cached |
-| Time remaining | on |
+| Cover tooltip | album |
+| Timer | progress bar |
+| Activity type | listening |
 | Stay up when paused | off — otherwise the activity clears |
+| "Paused" on the second line | on |
+
+Both lines are chosen from the same list — off, title, artist, album, year — so
+"title over album" is two settings, not a fixed layout. A line with nothing to
+show is left out rather than sent blank.
 
 The cover has to come from a URL, because Discord cannot display an image that
 only exists on your disk; that is the one reason the app makes a network request
-here, which is why it is off by default. The artwork comes from iTunes, with
-MusicBrainz as a fallback, and a result is only used when its artist and album
-match your tags — a search for an album title also returns compilations and
-deluxe editions, so the first hit is not good enough. If nothing matches, that
-album simply has no cover rather than the wrong one.
+here, which is why it is off by default. The artwork comes from an iTunes lookup
+by artist and album, cached per album, misses included.
 
 Rich Presence needs an application id, which Discord issues per app and which
 has to be compiled in:

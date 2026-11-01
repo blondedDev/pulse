@@ -1089,17 +1089,19 @@ fn discord_group() -> SettingGroup {
             )
             .description(tr().discord_share_desc.clone()),
         )
-        .item(discord_switch(
-            "discord-show-title",
-            tr().discord_show_title.clone(),
-            tr().discord_show_title_desc.clone(),
-            |s| &mut s.show_title,
+        .item(discord_choice(
+            "discord-line-one",
+            tr().discord_line_one.clone(),
+            tr().discord_line_one_desc.clone(),
+            line_options(),
+            |s| &mut s.line_one,
         ))
-        .item(discord_switch(
-            "discord-show-artist",
-            tr().discord_show_artist.clone(),
-            tr().discord_show_artist_desc.clone(),
-            |s| &mut s.show_artist,
+        .item(discord_choice(
+            "discord-line-two",
+            tr().discord_line_two.clone(),
+            tr().discord_line_two_desc.clone(),
+            line_options(),
+            |s| &mut s.line_two,
         ))
         .item(discord_switch(
             "discord-show-cover",
@@ -1107,17 +1109,33 @@ fn discord_group() -> SettingGroup {
             tr().discord_show_cover_desc.clone(),
             |s| &mut s.show_cover,
         ))
-        .item(discord_switch(
-            "discord-show-album",
-            tr().discord_show_album.clone(),
-            tr().discord_show_album_desc.clone(),
-            |s| &mut s.show_album,
+        .item(discord_choice(
+            "discord-cover-text",
+            tr().discord_cover_text.clone(),
+            tr().discord_cover_text_desc.clone(),
+            line_options(),
+            |s| &mut s.cover_text,
         ))
-        .item(discord_switch(
-            "discord-show-timestamps",
-            tr().discord_show_timestamps.clone(),
-            tr().discord_show_timestamps_desc.clone(),
-            |s| &mut s.show_timestamps,
+        .item(discord_choice(
+            "discord-timers",
+            tr().discord_timers.clone(),
+            tr().discord_timers_desc.clone(),
+            vec![
+                (discord::Timers::Off, tr().discord_timer_off.clone()),
+                (discord::Timers::Elapsed, tr().discord_timer_elapsed.clone()),
+                (discord::Timers::Progress, tr().discord_timer_progress.clone()),
+            ],
+            |s| &mut s.timers,
+        ))
+        .item(discord_choice(
+            "discord-verb",
+            tr().discord_verb.clone(),
+            tr().discord_verb_desc.clone(),
+            vec![
+                (discord::Verb::Listening, tr().discord_verb_listening.clone()),
+                (discord::Verb::Playing, tr().discord_verb_playing.clone()),
+            ],
+            |s| &mut s.verb,
         ))
         .item(discord_switch(
             "discord-keep-paused",
@@ -1125,6 +1143,69 @@ fn discord_group() -> SettingGroup {
             tr().discord_keep_paused_desc.clone(),
             |s| &mut s.keep_on_pause,
         ))
+        .item(discord_switch(
+            "discord-paused-line",
+            tr().discord_paused_line.clone(),
+            tr().discord_paused_line_desc.clone(),
+            |s| &mut s.paused_line,
+        ))
+}
+
+/// The things an activity line can show, in the order they are offered.
+fn line_options() -> Vec<(discord::Line, SharedString)> {
+    vec![
+        (discord::Line::Off, tr().discord_line_off.clone()),
+        (discord::Line::Title, tr().discord_line_title.clone()),
+        (discord::Line::Artist, tr().discord_line_artist.clone()),
+        (discord::Line::Album, tr().discord_line_album.clone()),
+        (discord::Line::Year, tr().discord_line_year.clone()),
+    ]
+}
+
+/// One enum setting of the presence as a row of small buttons.
+///
+/// A button group rather than a menu: the page is a list of rows, and a menu
+/// hides the choice behind a click when there are only a handful of options.
+fn discord_choice<T: Copy + PartialEq + 'static>(
+    id: &'static str,
+    label: SharedString,
+    description: SharedString,
+    options: Vec<(T, SharedString)>,
+    field: fn(&mut discord::PresenceSettings) -> &mut T,
+) -> SettingItem {
+    SettingItem::new(
+        label,
+        SettingField::render(move |_window, cx: &mut App| {
+            let current = *field(&mut cx.global::<SettingsStore>().discord_presence().clone());
+            let mut buttons = ButtonGroup::new(id).small();
+            for (index, (value, text)) in options.iter().enumerate() {
+                buttons = buttons.child(
+                    Button::new(SharedString::from(format!("{id}-{index}")))
+                        .label(text.clone())
+                        .selected(*value == current),
+                );
+            }
+            let values: Vec<T> = options.iter().map(|(value, _)| *value).collect();
+            h_flex().items_center().justify_end().child(
+                buttons.on_click(move |clicks: &Vec<usize>, _, cx| {
+                    let Some(&index) = clicks.first() else {
+                        return;
+                    };
+                    let Some(&value) = values.get(index) else {
+                        return;
+                    };
+                    let mut next = cx.global::<SettingsStore>().discord_presence().clone();
+                    *field(&mut next) = value;
+                    if let Err(e) = cx.global_mut::<SettingsStore>().set_discord_presence(next) {
+                        notify_save_error(cx, e);
+                    }
+                    // Take effect on the track that is playing, not the next one.
+                    crate::discord_bridge::refresh(cx);
+                }),
+            )
+        }),
+    )
+    .description(description)
 }
 
 /// One boolean of `DiscordPresenceSettings` as a switch row.

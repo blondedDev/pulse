@@ -95,23 +95,116 @@ pub fn priority_of(path: &str, priority: &[String]) -> Option<usize> {
     })
 }
 
-fn identity(candidate: &Candidate) -> Option<(String, String, String)> {
-    let title = music_library::normalize_tag(&candidate.title);
+fn identity(candidate: &Candidate) -> Option<(String, String)> {
+    let title = title_key(&candidate.title);
     if title.is_empty() {
         return None;
     }
-    // An empty artist is allowed: plenty of single-track drops have no tags, and
-    // the album and duration still tell them apart from everything else.
+    // The artist is not part of the key. Two copies of one song routinely credit
+    // it differently — "A$AP Rocky" against "A$AP Rocky, Bones" — and that is
+    // exactly the pair this tool is for. The artist is compared separately, by
+    // [`same_artist`], when the cluster is built.
     Some((
-        music_library::normalize_tag(&candidate.artist),
         title,
         music_library::normalize_tag(candidate.album.as_deref().unwrap_or("")),
     ))
 }
 
+/// Titles with featured-artist credits removed, so `"Holy Ghost (feat. Joe
+/// Fox)"` and `"Holy Ghost"` are recognised as one recording.
+fn title_key(title: &str) -> String {
+    music_library::normalize_tag(&strip_credits(title))
+}
+
+/// Bracket contents that name another performer rather than the song.
+const CREDIT_PREFIXES: &[&str] = &["feat", "ft.", "ft ", "featuring", "with ", "prod.", "produced"];
+
+fn strip_credits(title: &str) -> String {
+    let mut out = String::with_capacity(title.len());
+    let mut inner = String::new();
+    let mut depth = 0usize;
+    for c in title.chars() {
+        match c {
+            '(' | '[' => {
+                depth += 1;
+                if depth > 1 {
+                    inner.push(c);
+                }
+            }
+            ')' | ']' if depth > 0 => {
+                depth -= 1;
+                if depth > 0 {
+                    inner.push(c);
+                } else {
+                    let lower = inner.trim().to_lowercase();
+                    if !CREDIT_PREFIXES.iter().any(|p| lower.starts_with(p)) {
+                        out.push(' ');
+                        out.push_str(&inner);
+                        out.push(' ');
+                    }
+                    inner.clear();
+                }
+            }
+            _ if depth == 0 => out.push(c),
+            _ => inner.push(c),
+        }
+    }
+    out.push_str(&inner);
+    out
+}
+
+/// Separators that split one credit string into the people it names.
+const ARTIST_SEPARATORS: &[&str] = &[
+    ", ", "; ", " & ", " / ", " and ", " x ", " feat. ", " ft. ", " featuring ", " with ",
+];
+
+fn artist_names(artist: &str) -> Vec<String> {
+    let mut parts = vec![artist.to_lowercase()];
+    for separator in ARTIST_SEPARATORS {
+        parts = parts
+            .iter()
+            .flat_map(|part| part.split(separator))
+            .map(str::to_string)
+            .collect();
+    }
+    let mut names: Vec<String> = parts
+        .iter()
+        .map(|part| music_library::normalize_tag(part))
+        .filter(|name| !name.is_empty())
+        .collect();
+    names.push(music_library::normalize_tag(artist));
+    names.sort();
+    names.dedup();
+    names
+}
+
+/// True when the two credits name at least one artist in common. A side with no
+/// artist at all passes: plenty of single-track drops are untagged, and the
+/// album, title and duration still tell them apart.
+fn same_artist(a: &str, b: &str) -> bool {
+    let left = artist_names(a);
+    let right = artist_names(b);
+    if left.is_empty() || right.is_empty() {
+        return true;
+    }
+    left.iter().any(|name| right.contains(name))
+}
+
+fn durations_close(a: Option<i64>, b: Option<i64>) -> bool {
+    match (a, b) {
+        (Some(a), Some(b)) => (a - b).abs() <= DURATION_TOLERANCE_MS,
+        (None, None) => true,
+        _ => false,
+    }
+}
+
+fn same_recording(a: &Candidate, b: &Candidate) -> bool {
+    durations_close(a.duration_ms, b.duration_ms) && same_artist(&a.artist, &b.artist)
+}
+
 /// Group by identity, then split each group into clusters of near-equal length.
 fn clusters(candidates: &[Candidate]) -> Vec<Vec<Candidate>> {
-    let mut by_identity: Vec<((String, String, String), Vec<Candidate>)> = Vec::new();
+    let mut by_identity: Vec<((String, String), Vec<Candidate>)> = Vec::new();
     for candidate in candidates {
         let Some(key) = identity(candidate) else {
             continue;
@@ -129,27 +222,12 @@ fn clusters(candidates: &[Candidate]) -> Vec<Vec<Candidate>> {
         // by their album so they do not merge across records.
         let mut remaining: Vec<Vec<Candidate>> = Vec::new();
         for candidate in bucket {
-            let joined = remaining.iter_mut().any(|cluster| {
-                match (cluster[0].duration_ms, candidate.duration_ms) {
-                    (Some(a), Some(b)) => (a - b).abs() <= DURATION_TOLERANCE_MS,
-                    (None, None) => true,
-                    _ => false,
-                }
-            });
-            if joined {
-                // Push into the cluster that accepted it.
-                let index = remaining
-                    .iter()
-                    .position(|cluster| match (cluster[0].duration_ms, candidate.duration_ms)
-                    {
-                        (Some(a), Some(b)) => (a - b).abs() <= DURATION_TOLERANCE_MS,
-                        (None, None) => true,
-                        _ => false,
-                    })
-                    .expect("just matched");
-                remaining[index].push(candidate);
-            } else {
-                remaining.push(vec![candidate]);
+            let joined = remaining
+                .iter()
+                .position(|cluster| same_recording(&cluster[0], &candidate));
+            match joined {
+                Some(index) => remaining[index].push(candidate),
+                None => remaining.push(vec![candidate]),
             }
         }
         out.extend(remaining);
@@ -384,6 +462,77 @@ mod tests {
         let tracks = vec![
             candidate(1, "/music/Albums/a.mp3", "Intro", "Artist", "One"),
             candidate(2, "/music/Liked Songs/a.m4a", "Intro", "Artist", "Two"),
+        ];
+
+        let report = find(tracks, &priority());
+
+        assert!(report.is_empty());
+    }
+
+    #[test]
+    fn a_feature_credit_does_not_hide_a_duplicate() {
+        let tracks = vec![
+            candidate(1, "/music/Albums/a.m4a", "Holy Ghost", "A$AP Rocky", "Record"),
+            candidate(
+                2,
+                "/music/Liked Songs/b.m4a",
+                "Holy Ghost (feat. Joe Fox)",
+                "A$AP Rocky, Joe Fox",
+                "Record",
+            ),
+        ];
+
+        let report = find(tracks, &priority());
+
+        assert_eq!(report.removable.len(), 1);
+        assert_eq!(report.removable[0].track_id, 2, "the liked copy goes");
+    }
+
+    #[test]
+    fn an_extra_artist_on_one_copy_is_still_the_same_song() {
+        let tracks = vec![
+            candidate(1, "/music/Albums/a.m4a", "Canal St.", "A$AP Rocky", "Record"),
+            candidate(
+                2,
+                "/music/Liked Songs/b.m4a",
+                "Canal St. (feat. Bones)",
+                "A$AP Rocky; Bones",
+                "Record",
+            ),
+        ];
+
+        let report = find(tracks, &priority());
+
+        assert_eq!(report.removable.len(), 1);
+        assert_eq!(report.removable[0].track_id, 2);
+    }
+
+    #[test]
+    fn a_remix_credit_is_part_of_the_title() {
+        let tracks = vec![
+            candidate(1, "/music/Albums/a.m4a", "Song", "Artist", "Record"),
+            candidate(
+                2,
+                "/music/Liked Songs/b.m4a",
+                "Song (Prodigy Remix)",
+                "Artist",
+                "Record",
+            ),
+        ];
+
+        let report = find(tracks, &priority());
+
+        assert!(
+            report.is_empty(),
+            "a remix is a different recording, not a duplicate"
+        );
+    }
+
+    #[test]
+    fn different_artists_on_one_album_are_not_duplicates() {
+        let tracks = vec![
+            candidate(1, "/music/Albums/a.m4a", "Intro", "Artist One", "Record"),
+            candidate(2, "/music/Liked Songs/b.m4a", "Intro", "Artist Two", "Record"),
         ];
 
         let report = find(tracks, &priority());

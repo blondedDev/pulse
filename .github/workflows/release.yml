@@ -56,6 +56,15 @@ jobs:
             cd web && npm ci && npm run build
           fi
 
+      # `crates/discord/build.rs` reads the repo-root `.env` and nothing else,
+      # so a plain env var on the cargo step would do nothing: the value has to
+      # be a file before the build starts. `.env` is gitignored, which is why
+      # release binaries used to ship without Discord presence. The application
+      # id is a public identifier (it sits inside every running client), so it
+      # is written here instead of being kept as a secret.
+      - name: Bake in the Discord application id
+        run: printf 'DISCORD_CLIENT_ID=%s\n' '1565989158579740733' > .env
+
       - name: Build Pulse
         run: cargo build --release -p pulse
 

@@ -25,6 +25,7 @@ pulse_remote = { path = "../pulse_remote" }
 lyrics = { path = "../lyrics" }
 cover_search = { path = "../cover_search" }
 diagnostics = { workspace = true }
+process_memory = { path = "../process_memory" }
 log = { workspace = true }
 rfd = "0.17"
 flume = "0.12.0"

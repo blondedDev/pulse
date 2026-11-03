@@ -1,0 +1,11 @@
+[package]
+name = "process_memory"
+version.workspace = true
+edition.workspace = true
+publish = false
+
+[lib]
+path = "src/lib.rs"
+
+# No `[lints] workspace = true`: this crate exists to hold the single `unsafe`
+# call the workspace forbids everywhere else. See the crate docs.

@@ -317,6 +317,14 @@ impl LibraryView {
         self.stack.len() > 1
     }
 
+    /// Whether the frame on screen lists the subdirectories of one folder.
+    ///
+    /// This is the only place the header's sort control applies: the roots list
+    /// has its own meaning, and every other frame is a track list.
+    pub fn is_folder_level(&self) -> bool {
+        matches!(self.stack.last(), Some(NavEntry::FolderLevel { .. }))
+    }
+
     pub fn current_tab(&self) -> Option<LibraryRootTab> {
         if self.is_drilled_in() {
             return None;

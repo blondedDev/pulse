@@ -140,6 +140,7 @@ activity is built from your library, not from a service:
 
 | Setting | Default |
 |---|---|
+| Top line | Pulse (the app name) |
 | First line | title |
 | Second line | artist |
 | Cover art | off — one lookup per album, then cached |
@@ -152,6 +153,10 @@ activity is built from your library, not from a service:
 Both lines are chosen from the same list — off, title, artist, album, year — so
 "title over album" is two settings, not a fixed layout. A line with nothing to
 show is left out rather than sent blank.
+
+The top line is the one Discord otherwise labels with the application name. It
+can be hidden, or made to show a track field instead, so the activity reads
+"Listening to Take Care" rather than "Listening to Pulse".
 
 The cover has to come from a URL, because Discord cannot display an image that
 only exists on your disk; that is the one reason the app makes a network request

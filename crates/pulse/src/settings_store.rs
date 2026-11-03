@@ -147,6 +147,22 @@ pub enum AlbumsLayout {
     Grid,
 }
 
+/// How the folder browser orders the subdirectories it lists.
+///
+/// Only applies while the search box is empty: a search ranks by match, and
+/// re-sorting its results would throw that ranking away. The folder's own
+/// "Tracks in this folder" row stays on top regardless — it is not a
+/// subdirectory, and burying it under them is what the row exists to avoid.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum FolderSort {
+    #[default]
+    Name,
+    NameDesc,
+    Tracks,
+    TracksDesc,
+}
+
 /// Which library tab is selected when the window first opens.
 ///
 /// `Genres` is no longer offered — the tab is gone — but the variant stays so a
@@ -428,6 +444,8 @@ pub struct UserSettings {
     pub export_include_library: bool,
     #[serde(default = "default_true")]
     pub folders_enabled: bool,
+    #[serde(default)]
+    pub folder_sort: FolderSort,
     // The Tools page was removed; sleep timer lives in Settings now. The key is
     // still accepted so an older settings.json loads, and dropped on the next save.
     #[serde(default, skip_serializing)]
@@ -548,6 +566,7 @@ impl Default for UserSettings {
             export_include_settings: true,
             export_include_library: false,
             folders_enabled: true,
+            folder_sort: FolderSort::default(),
             _legacy_tools_enabled: false,
             show_track_duration: true,
             show_queue_actions: true,
@@ -1122,6 +1141,15 @@ impl SettingsStore {
 
     pub fn set_folders_enabled(&mut self, enabled: bool) -> anyhow::Result<()> {
         self.settings.folders_enabled = enabled;
+        self.save()
+    }
+
+    pub fn folder_sort(&self) -> FolderSort {
+        self.settings.folder_sort
+    }
+
+    pub fn set_folder_sort(&mut self, sort: FolderSort) -> anyhow::Result<()> {
+        self.settings.folder_sort = sort;
         self.save()
     }
 
@@ -1758,6 +1786,7 @@ mod tests {
             now_playing_details: NowPlayingDetails::Album,
             playlists_enabled: true,
             folders_enabled: true,
+            folder_sort: FolderSort::default(),
             _legacy_tools_enabled: true,
             show_track_duration: true,
             show_queue_actions: true,

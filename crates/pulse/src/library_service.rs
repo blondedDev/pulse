@@ -1344,7 +1344,19 @@ impl LibraryService {
         let _ = event_tx.send(LibraryEvent::CatalogChanged);
         let _ = event_tx.send(LibraryEvent::ScanComplete);
         let _ = event_tx.send(scan_outcome(ok));
+        release_scan_memory();
     }
+}
+
+/// Hand the allocator's freed-but-retained pages back to the kernel.
+///
+/// A scan parses every changed file on this thread — tag buffers, embedded
+/// artwork, decoded covers — and the arena keeps that peak afterwards. The
+/// process then sits at the scan's high-water mark for the rest of the session,
+/// which is what makes an idle Pulse look like it is holding memory it never
+/// uses.
+fn release_scan_memory() {
+    process_memory::trim();
 }
 
 fn folder_unavailable(path: &Path, had_media: impl Fn(&Path) -> bool) -> bool {

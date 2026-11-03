@@ -29,6 +29,7 @@ each is chosen from the same small set:
 
 | Setting | Values | Default |
 |---|---|---|
+| `header` | app, off, title, artist, album, year | app |
 | `line_one` | off, title, artist, album, year | title |
 | `line_two` | off, title, artist, album, year | artist |
 | `show_cover` | bool | off |
@@ -40,7 +41,15 @@ each is chosen from the same small set:
 
 A line whose field is missing — no album tag, no year — is left out of the
 activity rather than sent empty, because Discord renders an empty string as a
-blank line.
+blank line. The header is the exception: a chosen field the track lacks becomes
+a single space, because falling back to the app name would put back exactly the
+text the user asked to remove.
+
+`header` is the line above the two the activity fills, which Discord otherwise
+labels with the application name. It is sent as the activity's `name` field:
+leaving `name` unset keeps the app name, a single space renders as nothing, and
+any other value replaces it. Clients that predate the field ignore it and keep
+showing the app name, which is why `app` is the default.
 
 ## Non-obvious behaviour
 

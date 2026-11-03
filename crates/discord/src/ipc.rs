@@ -7,7 +7,7 @@ use discord_rich_presence::{DiscordIpc, DiscordIpcClient};
 use flume::{Receiver, RecvTimeoutError, Sender};
 
 use crate::art::ArtCache;
-use crate::{Line, Presence, Timers, Verb};
+use crate::{Header, Line, Presence, Timers, Verb};
 
 const TICK: Duration = Duration::from_secs(1);
 const MIN_INTERVAL: Duration = Duration::from_secs(5);
@@ -190,6 +190,13 @@ fn activity_for(p: &Presence, cover: Option<&str>) -> Activity<'static> {
     };
     let mut activity = Activity::new().activity_type(kind);
 
+    // Unset is what keeps Discord's application name on the top line; a space is
+    // the one value it renders as nothing at all. An empty string would be
+    // dropped and the app name would come back.
+    if let Some(name) = header_name(p, s.header) {
+        activity = activity.name(name);
+    }
+
     if let Some(text) = line(p, s.line_one) {
         activity = activity.details(text);
     }
@@ -237,6 +244,15 @@ fn activity_for(p: &Presence, cover: Option<&str>) -> Activity<'static> {
 }
 
 const PAUSED: &str = "Paused";
+
+/// The activity name, or `None` to leave Discord's application name in place.
+fn header_name(p: &Presence, header: Header) -> Option<String> {
+    let content = header.line()?;
+    // A chosen field that this track does not have falls back to the blank
+    // line, not to the app name: the user asked for the app name not to be
+    // there, and a missing album should not quietly put it back.
+    Some(line(p, content).unwrap_or_else(|| " ".to_string()))
+}
 
 /// The text one line of the activity shows, or `None` to leave the line out.
 fn line(p: &Presence, content: Line) -> Option<String> {
@@ -372,6 +388,36 @@ mod tests {
 
         let value = json(&presence(), None);
         assert!(value["assets"].get("large_image").is_none());
+    }
+
+    #[test]
+    fn the_header_is_the_app_name_until_the_user_changes_it() {
+        assert!(
+            json(&presence(), None).get("name").is_none(),
+            "an unset name keeps Discord's application name"
+        );
+
+        let mut p = presence();
+        p.settings.header = Header::Off;
+        assert_eq!(json(&p, None)["name"], " ", "a space renders as nothing");
+
+        p.settings.header = Header::Title;
+        assert_eq!(json(&p, None)["name"], "Take Care");
+
+        p.settings.header = Header::Year;
+        assert_eq!(json(&p, None)["name"], "2011");
+    }
+
+    #[test]
+    fn a_header_field_this_track_lacks_stays_blank() {
+        let mut p = presence();
+        p.album = None;
+        p.settings.header = Header::Album;
+        assert_eq!(
+            json(&p, None)["name"],
+            " ",
+            "a missing album must not put the app name back"
+        );
     }
 
     #[test]

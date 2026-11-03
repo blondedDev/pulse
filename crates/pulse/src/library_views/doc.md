@@ -274,6 +274,13 @@ playing), and drive the `PlaybackQueue` on click.
   nothing playable under it is not listed at all). Filter is fuzzy on the name.
   Reloads on `CatalogChanged`; an empty top level offers the library settings,
   while an emptied nested folder just says there is no music.
+  **Ordering is the header's, not the view's.** A scoped level sorts its
+  subdirectories by `FolderSort` (name A–Z/Z–A, fewest/most tracks), which the
+  header popover writes to the settings store; the view observes the global and
+  re-sorts in place, scrolling back to the top. Name comparisons ignore case and
+  track-count ties fall back to the name. The search box overrides the order
+  while it has text, because a fuzzy result is ranked by match and re-sorting it
+  would throw that ranking away. The own-tracks row stays above the list.
   **A folder's own files get their own row.** `child_folders` lists
   subdirectories, so a folder holding *both* subdirectories and files used to
   hide those files: `open_folder` drilled in on "has subfolders" and there was

@@ -18,8 +18,17 @@ pub fn drop_atlas_tile(image: Arc<RenderImage>, cx: &mut App) {
 }
 
 pub const LARGE_COVER_MIN_CAPACITY: usize = 32;
-pub const LARGE_COVER_MAX_CAPACITY: usize = 512;
-pub const LARGE_COVER_SCREENS: usize = 3;
+/// Hard ceiling on decoded covers held at once.
+///
+/// A decoded 320×320 cover is 410 KB of RGBA, so this is the difference between
+/// ~100 MB and ~200 MB of pixels — in system memory and again in the GPU atlas.
+/// The ceiling only binds while the window shows fewer covers than this; a
+/// viewport that needs more still gets `visible + 1`, because a capacity below
+/// what is on screen would evict a tile that is being painted this frame.
+pub const LARGE_COVER_MAX_CAPACITY: usize = 256;
+/// Screens of covers to keep: the visible one plus a screen of margin, so a
+/// scroll does not have to decode every tile it uncovers.
+pub const LARGE_COVER_SCREENS: usize = 2;
 
 fn capacity_for_visible(visible: usize) -> usize {
     let ceiling = LARGE_COVER_MAX_CAPACITY.max(visible.saturating_add(1));
@@ -242,7 +251,12 @@ mod tests {
     #[test]
     fn capacity_stays_between_its_bounds() {
         assert_eq!(capacity_for_visible(0), LARGE_COVER_MIN_CAPACITY);
-        assert_eq!(capacity_for_visible(100), LARGE_COVER_MAX_CAPACITY.min(300));
+        assert_eq!(capacity_for_visible(100), 200, "two screens of covers");
+        assert_eq!(
+            capacity_for_visible(200),
+            LARGE_COVER_MAX_CAPACITY,
+            "a viewport past the ceiling still fits inside it"
+        );
     }
 
     #[test]

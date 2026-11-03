@@ -1090,6 +1090,20 @@ fn discord_group() -> SettingGroup {
             .description(tr().discord_share_desc.clone()),
         )
         .item(discord_choice(
+            "discord-header",
+            tr().discord_header.clone(),
+            tr().discord_header_desc.clone(),
+            vec![
+                (discord::Header::App, tr().discord_header_app.clone()),
+                (discord::Header::Off, tr().discord_header_off.clone()),
+                (discord::Header::Title, tr().discord_line_title.clone()),
+                (discord::Header::Artist, tr().discord_line_artist.clone()),
+                (discord::Header::Album, tr().discord_line_album.clone()),
+                (discord::Header::Year, tr().discord_line_year.clone()),
+            ],
+            |s| &mut s.header,
+        ))
+        .item(discord_choice(
             "discord-line-one",
             tr().discord_line_one.clone(),
             tr().discord_line_one_desc.clone(),

@@ -2,18 +2,21 @@ use std::time::Duration;
 
 use gpui::prelude::FluentBuilder;
 use gpui::{
-    Animation, AnimationExt as _, App, AppContext, Context, DispatchPhase, DragMoveEvent, Empty,
-    Entity, EntityId, FocusHandle, Hsla, InteractiveElement, IntoElement, MouseButton,
-    MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, Render,
+    Anchor, Animation, AnimationExt as _, AnyElement, App, AppContext, Context, DispatchPhase,
+    DragMoveEvent, Empty, Entity, EntityId, FocusHandle, Hsla, InteractiveElement, IntoElement,
+    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, Render,
     StatefulInteractiveElement, Styled, Subscription, Window, canvas, div, ease_out_quint, px, svg,
 };
 use gpui_component::{
     Icon, Sizable, Size, StyledExt,
     button::{Button, ButtonVariants},
+    h_flex,
     input::{Input, InputEvent, InputState},
+    popover::Popover,
     slider::{SliderEvent, SliderState},
     theme::ThemeRegistry,
     tooltip::Tooltip,
+    v_flex,
 };
 
 use crate::audio_settings::AudioSettings;
@@ -38,7 +41,7 @@ use crate::media_bridge::MediaBridge;
 use crate::now_playing::{NavigateToAlbumRequested, NavigateToArtistRequested};
 use crate::playlist_popup::PlaylistPopup;
 use crate::queue_view::QueueView;
-use crate::settings_store::{BlurBackground, SettingsStore, ui_scale};
+use crate::settings_store::{BlurBackground, FolderSort, SettingsStore, ui_scale};
 use crate::settings_view::SettingsSliders;
 use crate::theme_colors::Colors;
 
@@ -93,6 +96,8 @@ pub struct MainView {
     command_palette: Entity<CommandPalette>,
     _command_palette_subscription: Subscription,
     is_drilled_in: bool,
+    /// The header sort menu, only present while a folder level is on screen.
+    folder_sort_open: bool,
     current_tab: LibraryRootTab,
     show_settings: bool,
     cover_mode: bool,
@@ -624,6 +629,7 @@ impl MainView {
             command_palette,
             _command_palette_subscription: command_palette_subscription,
             is_drilled_in: false,
+            folder_sort_open: false,
             current_tab: startup_tab,
             show_settings: false,
             cover_mode: false,
@@ -953,6 +959,12 @@ impl Render for MainView {
         let show_settings = self.show_settings;
         let show_screen = show_settings;
         let has_back = show_screen || self.is_drilled_in;
+        let is_folder_level = self.library_view.read(cx).is_folder_level();
+        // Leaving the level takes the menu with it; the flag would otherwise
+        // reopen it the next time a folder is entered.
+        if !is_folder_level {
+            self.folder_sort_open = false;
+        }
         let cover_mode = self.cover_mode;
         let active_tab = (!cover_mode).then_some(self.current_tab);
         if cover_mode {
@@ -1024,6 +1036,13 @@ impl Render for MainView {
             .gap_1()
             .when(has_back, |d| {
                 d.child(back_button(foreground, muted, scale, cx))
+                    .when(is_folder_level && !show_screen, |d| {
+                        d.child(folder_sort_button(
+                            self.folder_sort_open,
+                            scale,
+                            cx,
+                        ))
+                    })
             })
             .when(!has_back, |d| {
                 d.when(albums_enabled, |d| {
@@ -1406,6 +1425,115 @@ impl Render for MainView {
             .child(self.playlist_popup.clone())
             .child(self.command_palette.clone())
     }
+}
+
+/// The orders the folder browser offers, in menu order.
+const FOLDER_SORT_OPTIONS: [FolderSort; 4] = [
+    FolderSort::Name,
+    FolderSort::NameDesc,
+    FolderSort::Tracks,
+    FolderSort::TracksDesc,
+];
+
+fn folder_sort_label(sort: FolderSort) -> gpui::SharedString {
+    match sort {
+        FolderSort::Name => tr().sort_name_asc.clone(),
+        FolderSort::NameDesc => tr().sort_name_desc.clone(),
+        FolderSort::Tracks => tr().sort_tracks_asc.clone(),
+        FolderSort::TracksDesc => tr().sort_tracks_desc.clone(),
+    }
+}
+
+/// Sort control for the folder browser, shown next to Back while a folder level
+/// is on screen.
+///
+/// It is a popover rather than a row of buttons because the list is short but
+/// would not fit the header at the small font scale, and the device picker next
+/// to it already establishes this shape: round ghost trigger, popover under it,
+/// one check mark on the current choice.
+fn folder_sort_button(open: bool, scale: f32, cx: &mut Context<MainView>) -> impl IntoElement {
+    let view = cx.entity().clone();
+    let view_for_open = view.clone();
+    Popover::new("folder-sort-popover")
+        .anchor(Anchor::TopLeft)
+        .appearance(false)
+        .open(open)
+        .on_open_change(move |is_open, _, app_cx| {
+            let is_open = *is_open;
+            view_for_open.update(app_cx, |this, cx| {
+                if this.folder_sort_open != is_open {
+                    this.folder_sort_open = is_open;
+                    cx.notify();
+                }
+            });
+        })
+        .trigger(
+            Button::new("folder-sort-trigger")
+                .ghost()
+                .compact()
+                .rounded_full()
+                .w(px(40. * scale))
+                .h(px(40. * scale))
+                .icon(
+                    Icon::default()
+                        .path("icons/sort.svg")
+                        .size(px(20. * scale)),
+                )
+                .tooltip(tr().sort_folders.clone()),
+        )
+        .content(move |_state, _window, pop_cx| {
+            let current = pop_cx.global::<SettingsStore>().folder_sort();
+            let muted = Colors::muted(pop_cx);
+            let rows: Vec<AnyElement> = FOLDER_SORT_OPTIONS
+                .into_iter()
+                .map(|sort| {
+                    let view_row = view.clone();
+                    let selected = sort == current;
+                    h_flex()
+                        .id(("folder-sort-row", sort as usize))
+                        .cursor_pointer()
+                        .px_1()
+                        .py_1()
+                        .rounded(px(4.))
+                        .hover(move |style| style.bg(muted))
+                        .gap_1()
+                        .when(selected, |el| {
+                            el.child(Icon::default().path("icons/check.svg").size(px(14.)))
+                        })
+                        .child(div().text_sm().child(folder_sort_label(sort)))
+                        .on_click(move |_, _, app_cx| {
+                            view_row.update(app_cx, |this, cx| {
+                                if let Err(e) =
+                                    cx.global_mut::<SettingsStore>().set_folder_sort(sort)
+                                {
+                                    log::warn!("Failed to save folder sort: {}", e);
+                                }
+                                // Picking a row ends the choice; leaving the menu
+                                // open over the list it just reordered reads as if
+                                // nothing happened.
+                                this.folder_sort_open = false;
+                                cx.notify();
+                            });
+                        })
+                        .into_any_element()
+                })
+                .collect();
+            v_flex()
+                .id("folder-sort-popup")
+                .bg(cover_backdrop::popover_bg(
+                    Colors::popover(pop_cx),
+                    cover_backdrop::veil_factor(pop_cx),
+                ))
+                .border_1()
+                .border_color(Colors::border(pop_cx))
+                .rounded(px(6.))
+                .shadow_md()
+                .p_2()
+                .occlude()
+                .gap_1()
+                .min_w(px(180.))
+                .children(rows)
+        })
 }
 
 fn settings_gear_button(scale: f32, cx: &mut Context<MainView>) -> impl IntoElement {

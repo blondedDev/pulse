@@ -121,6 +121,11 @@ pub struct Strings {
     pub no_folders_match: SharedString,
     pub no_tracks_in_folder: SharedString,
     pub tracks_in_this_folder: SharedString,
+    pub sort_folders: SharedString,
+    pub sort_name_asc: SharedString,
+    pub sort_name_desc: SharedString,
+    pub sort_tracks_asc: SharedString,
+    pub sort_tracks_desc: SharedString,
     pub playlist_is_empty: SharedString,
 
     // --- Playlists ---
@@ -335,6 +340,10 @@ pub struct Strings {
     pub discord_needs_client_id: SharedString,
     pub discord_share: SharedString,
     pub discord_share_desc: SharedString,
+    pub discord_header: SharedString,
+    pub discord_header_desc: SharedString,
+    pub discord_header_app: SharedString,
+    pub discord_header_off: SharedString,
     pub discord_line_one: SharedString,
     pub discord_line_one_desc: SharedString,
     pub discord_line_two: SharedString,

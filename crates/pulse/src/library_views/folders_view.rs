@@ -1,3 +1,4 @@
+use std::cmp::Ordering;
 use std::rc::Rc;
 
 use gpui::{
@@ -17,6 +18,7 @@ use crate::library_views::albums_view::{OpenLibrarySettings, empty_library, has_
 use crate::library_views::fuzzy::fuzzy_sorted;
 use crate::localization::{LangChanged, tr};
 use crate::services::Services;
+use crate::settings_store::{FolderSort, SettingsStore};
 use crate::theme_colors::Colors;
 
 #[derive(Clone, Debug)]
@@ -55,6 +57,31 @@ impl FolderRow {
 const TOP_PADDING: f32 = 12.;
 const FOLDER_ROW_HEIGHT: f32 = 44.;
 
+/// Case-insensitive, so `beatles` and `Beatles` sort together instead of
+/// splitting the list at every capital.
+fn name_order(a: &music_library::FolderSummary, b: &music_library::FolderSummary) -> Ordering {
+    a.name.to_lowercase().cmp(&b.name.to_lowercase())
+}
+
+fn sort_folders(folders: &mut [music_library::FolderSummary], sort: FolderSort) {
+    // Ties fall back to the name: the order the query returned is not something
+    // to rely on, and a re-scan should not shuffle equal track counts.
+    match sort {
+        FolderSort::Name => folders.sort_by(name_order),
+        FolderSort::NameDesc => folders.sort_by(|a, b| name_order(b, a)),
+        FolderSort::Tracks => folders.sort_by(|a, b| {
+            a.track_count
+                .cmp(&b.track_count)
+                .then_with(|| name_order(a, b))
+        }),
+        FolderSort::TracksDesc => folders.sort_by(|a, b| {
+            b.track_count
+                .cmp(&a.track_count)
+                .then_with(|| name_order(a, b))
+        }),
+    }
+}
+
 pub struct FoldersView {
     /// `None` lists the configured library roots; `Some(path)` lists the
     /// immediate subdirectories of that folder instead. This is what makes the
@@ -67,12 +94,15 @@ pub struct FoldersView {
     /// reachable; `None` when there are none, which is the common case.
     own_folder: Option<music_library::FolderSummary>,
     filter: String,
+    /// How the subdirectories are ordered while the filter is empty.
+    sort: FolderSort,
     matcher: Matcher,
     is_scanning: bool,
     item_sizes: Rc<Vec<Size<Pixels>>>,
     scroll_handle: VirtualListScrollHandle,
     _subscription: Subscription,
     _lang_subscription: Subscription,
+    _settings_observer: Subscription,
 }
 
 impl FoldersView {
@@ -93,9 +123,8 @@ impl FoldersView {
         let is_scanning = library.is_scanning();
 
         let folders_all = Self::load(&library, scope.as_deref());
-        let rows = Self::build_rows(&folders_all);
         let own_folder = Self::own_folder(&library, scope.as_deref());
-        let item_sizes = Self::make_item_sizes(rows.len(), own_folder.is_some());
+        let sort = cx.global::<SettingsStore>().folder_sort();
 
         let subscription =
             cx.subscribe(
@@ -122,19 +151,38 @@ impl FoldersView {
             cx.notify();
         });
 
-        Self {
+        // The sort lives in the header, outside this view, so the setting is the
+        // one place both can read. Changing it reorders in place and jumps back
+        // to the top, where the new first entry is.
+        let settings_observer = cx.observe_global::<SettingsStore>(|this, cx| {
+            let sort = cx.global::<SettingsStore>().folder_sort();
+            if this.sort == sort {
+                return;
+            }
+            this.sort = sort;
+            this.recompute_visible();
+            this.scroll_handle
+                .scroll_to_item(0, gpui::ScrollStrategy::Top);
+            cx.notify();
+        });
+
+        let mut this = Self {
             scope,
             folders_all,
-            rows,
+            rows: Vec::new(),
             own_folder,
             filter: String::new(),
+            sort,
             matcher: Matcher::new(Config::DEFAULT),
             is_scanning,
-            item_sizes,
+            item_sizes: Rc::new(Vec::new()),
             scroll_handle: VirtualListScrollHandle::new(),
             _subscription: subscription,
             _lang_subscription: lang_subscription,
-        }
+            _settings_observer: settings_observer,
+        };
+        this.recompute_visible();
+        this
     }
 
     fn load(
@@ -209,7 +257,9 @@ impl FoldersView {
 
     fn recompute_visible(&mut self) {
         let filtered: Vec<music_library::FolderSummary> = if self.filter.is_empty() {
-            self.folders_all.clone()
+            let mut folders = self.folders_all.clone();
+            sort_folders(&mut folders, self.sort);
+            folders
         } else {
             fuzzy_sorted(
                 &mut self.matcher,
@@ -383,5 +433,53 @@ impl Render for FoldersView {
                 .flex_1(),
             )
             .scrollbar(&self.scroll_handle, ScrollbarAxis::Vertical)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn folder(name: &str, tracks: i64) -> music_library::FolderSummary {
+        music_library::FolderSummary {
+            name: name.to_string(),
+            path: format!("/music/{name}"),
+            track_count: tracks,
+            album_count: 0,
+        }
+    }
+
+    fn sorted(sort: FolderSort) -> Vec<String> {
+        let mut folders = vec![
+            folder("beta", 3),
+            folder("Alpha", 10),
+            folder("gamma", 3),
+            folder("delta", 1),
+        ];
+        sort_folders(&mut folders, sort);
+        folders.into_iter().map(|folder| folder.name).collect()
+    }
+
+    #[test]
+    fn name_sorts_ignore_case() {
+        assert_eq!(sorted(FolderSort::Name), ["Alpha", "beta", "delta", "gamma"]);
+        assert_eq!(
+            sorted(FolderSort::NameDesc),
+            ["gamma", "delta", "beta", "Alpha"]
+        );
+    }
+
+    #[test]
+    fn track_sorts_keep_a_name_order_on_ties() {
+        // `beta` and `gamma` both hold three tracks, so the tie-break decides:
+        // a scan that returns them the other way round must not reshuffle them.
+        assert_eq!(
+            sorted(FolderSort::Tracks),
+            ["delta", "beta", "gamma", "Alpha"]
+        );
+        assert_eq!(
+            sorted(FolderSort::TracksDesc),
+            ["Alpha", "beta", "gamma", "delta"]
+        );
     }
 }

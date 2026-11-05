@@ -163,6 +163,19 @@ pub enum FolderSort {
     TracksDesc,
 }
 
+/// How the folder browser draws the subdirectories it lists.
+///
+/// The list is one row per folder, dense and quick to scan. The grid gives each
+/// folder the artwork of the album it mostly holds, which is what a music folder
+/// on disk usually is: an album directory.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum FolderLayout {
+    #[default]
+    List,
+    Grid,
+}
+
 /// Which library tab is selected when the window first opens.
 ///
 /// `Genres` is no longer offered — the tab is gone — but the variant stays so a
@@ -446,6 +459,18 @@ pub struct UserSettings {
     pub folders_enabled: bool,
     #[serde(default)]
     pub folder_sort: FolderSort,
+    #[serde(default)]
+    pub folder_layout: FolderLayout,
+    /// Whether the folder grid draws artwork. Off leaves the tiles as text, for
+    /// a folder tree whose art is wrong or missing more often than not.
+    #[serde(default = "default_true")]
+    pub folders_show_cover: bool,
+    /// Whether a folder tile captions the album's artist.
+    #[serde(default = "default_true")]
+    pub folders_show_artist: bool,
+    /// Whether a folder tile captions the album's year.
+    #[serde(default = "default_true")]
+    pub folders_show_year: bool,
     // The Tools page was removed; sleep timer lives in Settings now. The key is
     // still accepted so an older settings.json loads, and dropped on the next save.
     #[serde(default, skip_serializing)]
@@ -567,6 +592,10 @@ impl Default for UserSettings {
             export_include_library: false,
             folders_enabled: true,
             folder_sort: FolderSort::default(),
+            folder_layout: FolderLayout::default(),
+            folders_show_cover: true,
+            folders_show_artist: true,
+            folders_show_year: true,
             _legacy_tools_enabled: false,
             show_track_duration: true,
             show_queue_actions: true,
@@ -1150,6 +1179,42 @@ impl SettingsStore {
 
     pub fn set_folder_sort(&mut self, sort: FolderSort) -> anyhow::Result<()> {
         self.settings.folder_sort = sort;
+        self.save()
+    }
+
+    pub fn folder_layout(&self) -> FolderLayout {
+        self.settings.folder_layout
+    }
+
+    pub fn set_folder_layout(&mut self, layout: FolderLayout) -> anyhow::Result<()> {
+        self.settings.folder_layout = layout;
+        self.save()
+    }
+
+    pub fn folders_show_cover(&self) -> bool {
+        self.settings.folders_show_cover
+    }
+
+    pub fn set_folders_show_cover(&mut self, show: bool) -> anyhow::Result<()> {
+        self.settings.folders_show_cover = show;
+        self.save()
+    }
+
+    pub fn folders_show_artist(&self) -> bool {
+        self.settings.folders_show_artist
+    }
+
+    pub fn set_folders_show_artist(&mut self, show: bool) -> anyhow::Result<()> {
+        self.settings.folders_show_artist = show;
+        self.save()
+    }
+
+    pub fn folders_show_year(&self) -> bool {
+        self.settings.folders_show_year
+    }
+
+    pub fn set_folders_show_year(&mut self, show: bool) -> anyhow::Result<()> {
+        self.settings.folders_show_year = show;
         self.save()
     }
 
@@ -1787,6 +1852,10 @@ mod tests {
             playlists_enabled: true,
             folders_enabled: true,
             folder_sort: FolderSort::default(),
+            folder_layout: FolderLayout::default(),
+            folders_show_cover: true,
+            folders_show_artist: true,
+            folders_show_year: true,
             _legacy_tools_enabled: true,
             show_track_duration: true,
             show_queue_actions: true,

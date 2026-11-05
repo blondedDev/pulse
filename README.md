@@ -18,7 +18,9 @@ One library. No account. No cloud.
 
 **Library** — indexes the folders you choose and keeps watching them. Browse by
 album, artist, folder, playlist or one flat All tracks list; `Ctrl+K` searches
-everything; shift- and ctrl-click select rows across a list. Cue sheets are
+everything; shift- and ctrl-click select rows across a list. Folders can be a
+list or a grid of tiles with album art, artist and year, switched from the
+header. Cue sheets are
 understood, and a re-rip or a moved folder doesn't lose your play history.
 
 **Playback** — native sample rate through PipeWire, or an exclusive grab if you

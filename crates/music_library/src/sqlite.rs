@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -800,6 +800,110 @@ fn folder_display_name(path: &str) -> String {
     Path::new(path)
         .file_name()
         .map_or_else(|| path.to_string(), |n| n.to_string_lossy().into_owned())
+}
+
+/// One track, reduced to what a folder tile needs to know about it.
+struct FolderEntry {
+    source_key: String,
+    album_id: Option<i64>,
+    cover_art_id: Option<i64>,
+    artist: Option<String>,
+    year: Option<i32>,
+}
+
+/// The album a folder's tile borrows its art, artist and year from.
+struct FolderTile {
+    cover_art_id: Option<i64>,
+    artist: Option<String>,
+    year: Option<i32>,
+}
+
+/// Everything a folder's rows say about it, gathered in one pass.
+///
+/// The counts used to come from `COUNT(*)`/`COUNT(DISTINCT …)` in SQL, but the
+/// grid tile also wants the album art, artist and year of the album the folder
+/// mostly holds, and that is a choice between albums rather than an aggregate
+/// over tracks. Both listings now share this one pass.
+#[derive(Default)]
+struct FolderAccumulator {
+    track_count: i64,
+    /// Tracks each album contributes, keyed by album id (`None` for tracks with
+    /// no album). The largest wins the tile.
+    per_album: BTreeMap<Option<i64>, i64>,
+    /// Art, artist and year per album, kept once per album rather than once per
+    /// track.
+    albums: BTreeMap<i64, FolderTile>,
+}
+
+impl FolderAccumulator {
+    fn add(&mut self, entry: FolderEntry) {
+        self.track_count += 1;
+        *self.per_album.entry(entry.album_id).or_insert(0) += 1;
+        if let Some(id) = entry.album_id {
+            self.albums.entry(id).or_insert(FolderTile {
+                cover_art_id: entry.cover_art_id,
+                artist: entry.artist,
+                year: entry.year,
+            });
+        }
+    }
+
+    /// Distinct albums, not counting "no album".
+    ///
+    /// `None` is a track with no album tag, not an album; counting it claimed
+    /// one album for a folder of loose files.
+    fn album_count(&self) -> i64 {
+        self.per_album.keys().filter(|id| id.is_some()).count() as i64
+    }
+
+    /// The tile for this folder: the album most of its tracks belong to.
+    ///
+    /// Ties break on the lower album id, so a rescan cannot swap two equally
+    /// sized albums back and forth and change the folder's picture.
+    fn tile(&self) -> FolderTile {
+        let dominant = self
+            .per_album
+            .iter()
+            .filter_map(|(id, count)| id.map(|id| (id, *count)))
+            .max_by_key(|(id, count)| (*count, std::cmp::Reverse(*id)))
+            .map(|(id, _)| id);
+        match dominant.and_then(|id| self.albums.get(&id)) {
+            Some(tile) => FolderTile {
+                cover_art_id: tile.cover_art_id,
+                artist: tile.artist.clone(),
+                year: tile.year,
+            },
+            None => FolderTile {
+                cover_art_id: None,
+                artist: None,
+                year: None,
+            },
+        }
+    }
+}
+
+/// Every track below `dir`, with the album fields a folder tile reads.
+fn folder_entries(conn: &Connection, dir: &str) -> Result<Vec<FolderEntry>> {
+    let sql = format!(
+        "SELECT b.source_key, t.album_id, \
+         COALESCE(t.cover_art_id, m.cover_art_id, al.cover_art_id), \
+         art.name, COALESCE(t.year, al.year) {FOLDER_ENTRY_FROM} \
+         AND b.source_key LIKE ?1 ESCAPE '\\'"
+    );
+    let mut stmt = conn.prepare_cached(&sql)?;
+    let rows = stmt
+        .query_map([folder_like_pattern(dir)], |row| {
+            Ok(FolderEntry {
+                source_key: row.get(0)?,
+                album_id: row.get(1)?,
+                cover_art_id: row.get(2)?,
+                artist: row.get(3)?,
+                year: row.get(4)?,
+            })
+        })
+        .map_err(LibraryError::Database)?;
+    rows.collect::<std::result::Result<Vec<_>, _>>()
+        .map_err(LibraryError::Database)
 }
 
 struct ItemSnapshot<'a> {
@@ -2106,24 +2210,23 @@ impl LibraryRepository for SqliteLibrary {
             if path.is_empty() {
                 continue;
             }
-            let pattern = folder_like_pattern(&path);
-            let pattern_sql = format!(
-                "SELECT COUNT(*), COUNT(DISTINCT t.album_id) {FOLDER_ENTRY_FROM} \
-                 AND b.source_key LIKE ?1 ESCAPE '\\'"
-            );
-            let mut stmt = conn.prepare_cached(&pattern_sql)?;
-            let (track_count, album_count): (i64, i64) = stmt
-                .query_row([&pattern], |row| Ok((row.get(0)?, row.get(1)?)))
-                .map_err(LibraryError::Database)?;
+            let mut folder = FolderAccumulator::default();
+            for entry in folder_entries(&conn, &path)? {
+                folder.add(entry);
+            }
             // A root with nothing playable under it is not worth showing.
-            if track_count == 0 {
+            if folder.track_count == 0 {
                 continue;
             }
+            let tile = folder.tile();
             summaries.push(FolderSummary {
                 name: folder_display_name(&path),
                 path,
-                track_count,
-                album_count,
+                track_count: folder.track_count,
+                album_count: folder.album_count(),
+                cover_art_id: tile.cover_art_id,
+                artist: tile.artist,
+                year: tile.year,
             });
         }
         summaries.sort_by_key(|s| s.name.to_lowercase());
@@ -2134,21 +2237,10 @@ impl LibraryRepository for SqliteLibrary {
         let conn = self.conn.lock().unwrap();
         let base = clean_dir(path);
         let base_path = PathBuf::from(&base);
-        let sql = format!(
-            "SELECT b.source_key, t.album_id {FOLDER_ENTRY_FROM} \
-             AND b.source_key LIKE ?1 ESCAPE '\\'"
-        );
-        let mut stmt = conn.prepare_cached(&sql)?;
-        let rows = stmt
-            .query_map([folder_like_pattern(&base)], |row| {
-                Ok((row.get::<_, String>(0)?, row.get::<_, Option<i64>>(1)?))
-            })
-            .map_err(LibraryError::Database)?;
 
-        let mut folders: BTreeMap<String, (i64, HashSet<Option<i64>>)> = BTreeMap::new();
-        for row in rows {
-            let (track_path, album_id) = row.map_err(LibraryError::Database)?;
-            let Ok(rest) = Path::new(&track_path).strip_prefix(&base_path) else {
+        let mut folders: BTreeMap<String, FolderAccumulator> = BTreeMap::new();
+        for entry in folder_entries(&conn, &base)? {
+            let Ok(rest) = Path::new(&entry.source_key).strip_prefix(&base_path) else {
                 continue;
             };
             let mut components = rest.components();
@@ -2164,24 +2256,26 @@ impl LibraryRepository for SqliteLibrary {
             if name.is_empty() {
                 continue;
             }
-            let entry = folders.entry(name).or_insert_with(|| (0, HashSet::new()));
-            entry.0 += 1;
-            entry.1.insert(album_id);
+            folders.entry(name).or_default().add(entry);
         }
 
         Ok({
             let mut summaries: Vec<FolderSummary> = folders
                 .into_iter()
-                .map(|(name, (track_count, albums))| FolderSummary {
-                    // The host separator, because the track paths these come from
-                    // are host-native; joining with a literal `/` built folder
-                    // paths that no stored path could ever match on Windows.
-                    path: format!("{base}{}{name}", std::path::MAIN_SEPARATOR),
-                    name,
-                    track_count,
-                    // `None` is "tracks with no album", not an album. Counting it
-                    // claimed one album for a folder of loose files.
-                    album_count: albums.iter().filter(|id| id.is_some()).count() as i64,
+                .map(|(name, folder)| {
+                    let tile = folder.tile();
+                    FolderSummary {
+                        // The host separator, because the track paths these come from
+                        // are host-native; joining with a literal `/` built folder
+                        // paths that no stored path could ever match on Windows.
+                        path: format!("{base}{}{name}", std::path::MAIN_SEPARATOR),
+                        name,
+                        track_count: folder.track_count,
+                        album_count: folder.album_count(),
+                        cover_art_id: tile.cover_art_id,
+                        artist: tile.artist,
+                        year: tile.year,
+                    }
                 })
                 .collect();
             // `folder_roots` orders case-insensitively, and a level that ordered
@@ -4034,6 +4128,83 @@ mod tests {
 
         assert_eq!(loose.track_count, 3);
         assert_eq!(loose.album_count, 1);
+    }
+
+    /// The grid tile takes its art, artist and year from the album the folder
+    /// mostly holds, not from whichever track the query happened to return
+    /// first. A folder is a path, so this is the only way it can have a picture.
+    #[test]
+    fn child_folders_borrow_the_dominant_albums_art() {
+        let lib = open_test_lib();
+        let cover_id: i64 = {
+            let conn = lib.conn.lock().unwrap();
+            conn.execute(
+                "INSERT INTO cover_art (hash, small, large, source_path, embedded) \
+                 VALUES ('dominant', x'', x'', '/music/Big/a.jpg', 0)",
+                [],
+            )
+            .unwrap();
+            conn.last_insert_rowid()
+        };
+        let artist = lib.upsert_artist("The Band").unwrap();
+        let big = lib
+            .upsert_album("Big", Some(1999), Some(cover_id))
+            .unwrap();
+        let small = lib.upsert_album("Small", Some(2020), None).unwrap();
+        // The tile reads the album's credited artist, which is a separate
+        // relation from the track artists a scan also fills in.
+        lib.set_album_artists(big, &[(artist, 0)]).unwrap();
+        for (path, album) in [
+            ("/music/Show/a.flac", big),
+            ("/music/Show/b.flac", big),
+            ("/music/Show/c.flac", small),
+        ] {
+            let id = lib
+                .upsert_track(
+                    &NewTrack {
+                        path: path.into(),
+                        title: None,
+                        ..Default::default()
+                    },
+                    Some(album),
+                    &[(artist, 0)],
+                )
+                .unwrap();
+            // Folders are derived from media bindings, not from the tracks
+            // table, so a track without one is invisible to every folder query.
+            lib.place_for_tests(id, "/music", path);
+        }
+
+        let show = lib
+            .child_folders("/music")
+            .unwrap()
+            .into_iter()
+            .find(|f| f.name == "Show")
+            .unwrap();
+
+        assert_eq!(show.album_count, 2);
+        assert_eq!(show.cover_art_id, Some(cover_id), "two tracks against one");
+        assert_eq!(show.artist.as_deref(), Some("The Band"));
+        assert_eq!(show.year, Some(1999));
+    }
+
+    /// A folder of loose files has no album, so it has no picture to show —
+    /// and must not borrow the one from a sibling folder.
+    #[test]
+    fn a_folder_without_an_album_has_no_tile_art() {
+        let lib = open_test_lib();
+        add_track(&lib, "/music/Loose/a.flac");
+
+        let loose = lib
+            .child_folders("/music")
+            .unwrap()
+            .into_iter()
+            .find(|f| f.name == "Loose")
+            .unwrap();
+
+        assert_eq!(loose.cover_art_id, None);
+        assert_eq!(loose.artist, None);
+        assert_eq!(loose.year, None);
     }
 
     /// The "tracks in this folder" row counts the files that sit directly in the

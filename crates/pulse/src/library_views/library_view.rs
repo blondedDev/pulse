@@ -325,6 +325,18 @@ impl LibraryView {
         matches!(self.stack.last(), Some(NavEntry::FolderLevel { .. }))
     }
 
+    /// Whether the frame on screen belongs to the Folders tab: its roots list,
+    /// or a folder level inside it.
+    ///
+    /// The header's folder controls use this rather than `current_tab`, which is
+    /// `None` as soon as anything is drilled in.
+    pub fn is_folder_frame(&self) -> bool {
+        matches!(
+            self.stack.last(),
+            Some(NavEntry::Root(LibraryRootTab::Folders) | NavEntry::FolderLevel { .. })
+        )
+    }
+
     pub fn current_tab(&self) -> Option<LibraryRootTab> {
         if self.is_drilled_in() {
             return None;
@@ -462,6 +474,9 @@ impl LibraryView {
                 path,
                 track_count: 0,
                 album_count: 0,
+                cover_art_id: None,
+                artist: None,
+                year: None,
             });
         self.open_folder(summary, cx);
     }

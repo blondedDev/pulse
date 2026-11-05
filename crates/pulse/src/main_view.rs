@@ -41,7 +41,7 @@ use crate::media_bridge::MediaBridge;
 use crate::now_playing::{NavigateToAlbumRequested, NavigateToArtistRequested};
 use crate::playlist_popup::PlaylistPopup;
 use crate::queue_view::QueueView;
-use crate::settings_store::{BlurBackground, FolderSort, SettingsStore, ui_scale};
+use crate::settings_store::{BlurBackground, FolderLayout, FolderSort, SettingsStore, ui_scale};
 use crate::settings_view::SettingsSliders;
 use crate::theme_colors::Colors;
 
@@ -960,6 +960,8 @@ impl Render for MainView {
         let show_screen = show_settings;
         let has_back = show_screen || self.is_drilled_in;
         let is_folder_level = self.library_view.read(cx).is_folder_level();
+        let is_folder_frame = self.library_view.read(cx).is_folder_frame();
+        let folder_layout = cx.global::<SettingsStore>().folder_layout();
         // Leaving the level takes the menu with it; the flag would otherwise
         // reopen it the next time a folder is entered.
         if !is_folder_level {
@@ -1110,6 +1112,12 @@ impl Render for MainView {
                     ))
                 })
                 .child(cover_mode_button(cover_mode, tab_colors, scale, cx))
+            })
+            // The folder tab's own view options. At the roots level there is no
+            // Back button to sit beside, so this follows the tabs instead; at a
+            // folder level it lands next to the sort control.
+            .when(is_folder_frame && !show_screen && !cover_mode, |d| {
+                d.child(folder_layout_button(folder_layout, scale, cx))
             });
 
         let right_group = div()
@@ -1520,10 +1528,11 @@ fn folder_sort_button(open: bool, scale: f32, cx: &mut Context<MainView>) -> imp
                 .collect();
             v_flex()
                 .id("folder-sort-popup")
-                .bg(cover_backdrop::popover_bg(
-                    Colors::popover(pop_cx),
-                    cover_backdrop::veil_factor(pop_cx),
-                ))
+                // Solid, not veiled. Every other popover lets the blurred
+                // backdrop through so it reads as part of the window, but this
+                // one floats over the library and its rows are the whole point:
+                // a 15% transparent menu over a busy cover is unreadable.
+                .bg(Colors::popover(pop_cx))
                 .border_1()
                 .border_color(Colors::border(pop_cx))
                 .rounded(px(6.))
@@ -1534,6 +1543,38 @@ fn folder_sort_button(open: bool, scale: f32, cx: &mut Context<MainView>) -> imp
                 .min_w(px(180.))
                 .children(rows)
         })
+}
+
+/// Switch the folder tab between rows and tiles.
+///
+/// One button, not a two-option group: it is a view toggle, and the icon shows
+/// what pressing it gives you rather than what is on screen now.
+fn folder_layout_button(
+    layout: FolderLayout,
+    scale: f32,
+    cx: &mut Context<MainView>,
+) -> impl IntoElement {
+    let next = match layout {
+        FolderLayout::List => FolderLayout::Grid,
+        FolderLayout::Grid => FolderLayout::List,
+    };
+    let (icon, label) = match layout {
+        FolderLayout::List => ("icons/grid.svg", tr().folder_layout_show_grid.clone()),
+        FolderLayout::Grid => ("icons/list.svg", tr().folder_layout_show_list.clone()),
+    };
+    Button::new("folder-layout-toggle")
+        .ghost()
+        .compact()
+        .rounded_full()
+        .w(px(40. * scale))
+        .h(px(40. * scale))
+        .icon(Icon::default().path(icon).size(px(20. * scale)))
+        .tooltip(label)
+        .on_click(cx.listener(move |_, _, _, cx| {
+            if let Err(e) = cx.global_mut::<SettingsStore>().set_folder_layout(next) {
+                log::warn!("Failed to save folder layout: {}", e);
+            }
+        }))
 }
 
 fn settings_gear_button(scale: f32, cx: &mut Context<MainView>) -> impl IntoElement {

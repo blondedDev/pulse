@@ -1,10 +1,11 @@
 use std::cmp::Ordering;
+use std::collections::HashSet;
 use std::rc::Rc;
 
 use gpui::{
-    Context, ElementId, EventEmitter, InteractiveElement, IntoElement, ParentElement, Pixels,
-    Render, SharedString, Size, StatefulInteractiveElement, Styled, Subscription, Window, div, px,
-    size,
+    AnyElement, Context, ElementId, EventEmitter, InteractiveElement, IntoElement, ParentElement,
+    Pixels, Render, SharedString, Size, StatefulInteractiveElement, Styled, Subscription, Window,
+    div, px, size,
 };
 use gpui_component::{
     Icon, IconName, Sizable, VirtualListScrollHandle, h_flex,
@@ -13,12 +14,14 @@ use gpui_component::{
 };
 use nucleo_matcher::{Config, Matcher};
 
-use crate::library_service::LibraryEvent;
+use crate::cover_art_cache::{capacity_for_peak_visible, decode_cover_tile};
+use crate::library_service::{LibraryAccess, LibraryEvent};
 use crate::library_views::albums_view::{OpenLibrarySettings, empty_library, has_music_sources};
+use crate::library_views::{albums_grid, folders_grid};
 use crate::library_views::fuzzy::fuzzy_sorted;
 use crate::localization::{LangChanged, tr};
 use crate::services::Services;
-use crate::settings_store::{FolderSort, SettingsStore};
+use crate::settings_store::{FolderLayout, FolderSort, SettingsStore};
 use crate::theme_colors::Colors;
 
 #[derive(Clone, Debug)]
@@ -36,9 +39,9 @@ pub struct FolderTracksRequested {
     pub folder: music_library::FolderSummary,
 }
 
-struct FolderRow {
-    summary: music_library::FolderSummary,
-    name: SharedString,
+pub(super) struct FolderRow {
+    pub(super) summary: music_library::FolderSummary,
+    pub(super) name: SharedString,
     count_label: SharedString,
 }
 
@@ -54,8 +57,8 @@ impl FolderRow {
     }
 }
 
-const TOP_PADDING: f32 = 12.;
-const FOLDER_ROW_HEIGHT: f32 = 44.;
+pub(super) const TOP_PADDING: f32 = 12.;
+pub(super) const FOLDER_ROW_HEIGHT: f32 = 44.;
 
 /// Case-insensitive, so `beatles` and `Beatles` sort together instead of
 /// splitting the list at every capital.
@@ -87,19 +90,31 @@ pub struct FoldersView {
     /// immediate subdirectories of that folder instead. This is what makes the
     /// tab drill down one level at a time.
     scope: Option<SharedString>,
-    folders_all: Vec<music_library::FolderSummary>,
-    rows: Vec<FolderRow>,
+    pub(super) folders_all: Vec<music_library::FolderSummary>,
+    pub(super) rows: Vec<FolderRow>,
     /// The folder being listed, when it has tracks sitting directly in it.
     /// Rendered as one extra row above the subdirectories so those tracks stay
     /// reachable; `None` when there are none, which is the common case.
-    own_folder: Option<music_library::FolderSummary>,
+    pub(super) own_folder: Option<music_library::FolderSummary>,
     filter: String,
     /// How the subdirectories are ordered while the filter is empty.
     sort: FolderSort,
+    /// Whether the level is drawn as rows or as tiles.
+    layout: FolderLayout,
     matcher: Matcher,
     is_scanning: bool,
-    item_sizes: Rc<Vec<Size<Pixels>>>,
-    scroll_handle: VirtualListScrollHandle,
+    pub(super) item_sizes: Rc<Vec<Size<Pixels>>>,
+    pub(super) scroll_handle: VirtualListScrollHandle,
+    /// Grid geometry, measured from the real width in `render` because the
+    /// column count depends on the panel, not on a setting.
+    pub(super) measured_width: Pixels,
+    pub(super) columns: usize,
+    pub(super) tile_width: f32,
+    pub(super) rem_size: f32,
+    library_access: LibraryAccess,
+    covers_in_flight: HashSet<i64>,
+    covers_unavailable: HashSet<i64>,
+    visible_span_peak: usize,
     _subscription: Subscription,
     _lang_subscription: Subscription,
     _settings_observer: Subscription,
@@ -125,6 +140,8 @@ impl FoldersView {
         let folders_all = Self::load(&library, scope.as_deref());
         let own_folder = Self::own_folder(&library, scope.as_deref());
         let sort = cx.global::<SettingsStore>().folder_sort();
+        let layout = cx.global::<SettingsStore>().folder_layout();
+        let library_access = library.library_access();
 
         let subscription =
             cx.subscribe(
@@ -151,18 +168,23 @@ impl FoldersView {
             cx.notify();
         });
 
-        // The sort lives in the header, outside this view, so the setting is the
-        // one place both can read. Changing it reorders in place and jumps back
-        // to the top, where the new first entry is.
+        // The sort and the layout live in the header, outside this view, so the
+        // setting is the one place both can read. Changing either reorders or
+        // re-shapes in place and jumps back to the top, where the new first
+        // entry is.
         let settings_observer = cx.observe_global::<SettingsStore>(|this, cx| {
-            let sort = cx.global::<SettingsStore>().folder_sort();
-            if this.sort == sort {
-                return;
+            let settings = cx.global::<SettingsStore>();
+            let sort = settings.folder_sort();
+            let layout = settings.folder_layout();
+            if this.sort != sort || this.layout != layout {
+                this.sort = sort;
+                this.layout = layout;
+                this.recompute_visible();
+                this.scroll_handle
+                    .scroll_to_item(0, gpui::ScrollStrategy::Top);
             }
-            this.sort = sort;
-            this.recompute_visible();
-            this.scroll_handle
-                .scroll_to_item(0, gpui::ScrollStrategy::Top);
+            // The caption toggles do not change the geometry, but they do change
+            // every tile, so the repaint happens either way.
             cx.notify();
         });
 
@@ -173,10 +195,19 @@ impl FoldersView {
             own_folder,
             filter: String::new(),
             sort,
+            layout,
             matcher: Matcher::new(Config::DEFAULT),
             is_scanning,
             item_sizes: Rc::new(Vec::new()),
             scroll_handle: VirtualListScrollHandle::new(),
+            measured_width: px(0.),
+            columns: 1,
+            tile_width: 1.,
+            rem_size: 16.,
+            library_access,
+            covers_in_flight: HashSet::new(),
+            covers_unavailable: HashSet::new(),
+            visible_span_peak: 0,
             _subscription: subscription,
             _lang_subscription: lang_subscription,
             _settings_observer: settings_observer,
@@ -227,6 +258,10 @@ impl FoldersView {
             // that matters. Counting the albums here would mean another query
             // for a number nothing reads.
             album_count: 0,
+            // This row opens a track list, so it is never drawn as a tile.
+            cover_art_id: None,
+            artist: None,
+            year: None,
         })
     }
 
@@ -234,13 +269,13 @@ impl FoldersView {
         folders.iter().cloned().map(FolderRow::build).collect()
     }
 
-    fn make_item_sizes(row_count: usize, has_own_row: bool) -> Rc<Vec<Size<Pixels>>> {
+    fn make_item_sizes(row_count: usize, has_own_row: bool) -> Vec<Size<Pixels>> {
         let mut sizes = vec![size(px(300.), px(TOP_PADDING))];
         if has_own_row {
             sizes.push(size(px(300.), px(FOLDER_ROW_HEIGHT + 1.)));
         }
         sizes.extend(vec![size(px(300.), px(FOLDER_ROW_HEIGHT + 1.)); row_count]);
-        Rc::new(sizes)
+        sizes
     }
 
     pub fn set_filter(&mut self, query: &str, cx: &mut Context<Self>) {
@@ -274,7 +309,104 @@ impl FoldersView {
             .collect()
         };
         self.rows = Self::build_rows(&filtered);
-        self.item_sizes = Self::make_item_sizes(self.rows.len(), self.own_folder.is_some());
+        self.rebuild_items();
+    }
+
+    /// Recompute the virtual list's item heights for the current layout.
+    fn rebuild_items(&mut self) {
+        self.item_sizes = Rc::new(match self.layout {
+            FolderLayout::List => {
+                Self::make_item_sizes(self.rows.len(), self.own_folder.is_some())
+            }
+            FolderLayout::Grid => folders_grid::grid_item_sizes(
+                self.rows.len(),
+                self.own_folder.is_some(),
+                self.columns,
+                self.tile_width,
+                self.rem_size,
+            ),
+        });
+    }
+
+    /// The panel width, from the grid's measuring canvas.
+    ///
+    /// Column count follows the window, so it cannot come from a setting. A
+    /// width change rebuilds the rows; the caller repaints on the next frame.
+    pub(super) fn set_grid_width(&mut self, width: Pixels) {
+        self.measured_width = width;
+        let (columns, tile_width) = albums_grid::grid_metrics(f32::from(width));
+        self.columns = columns;
+        self.tile_width = tile_width;
+        if self.layout == FolderLayout::Grid {
+            self.rebuild_items();
+        }
+    }
+
+    /// Make sure the covers the visible tiles need are decoded.
+    ///
+    /// The grid asks for the visible rows plus one row of margin, so a scroll
+    /// does not uncover a row of placeholders. The large-cover cache is shared
+    /// with the album grid and bounded by what is on screen, which is what keeps
+    /// a big window from holding a whole library of 320×320 pixels.
+    pub(super) fn ensure_grid_covers(
+        &mut self,
+        folders: std::ops::Range<usize>,
+        cx: &mut Context<Self>,
+    ) {
+        let cache = cx.global::<Services>().cover_art_cache.clone();
+        let capacity = capacity_for_peak_visible(&mut self.visible_span_peak, folders.len());
+        cache.borrow_mut().set_large_capacity(capacity, cx);
+        let mut wanted: Vec<i64> = {
+            let cache = cache.borrow();
+            folders
+                .filter_map(|ix| self.rows.get(ix)?.summary.cover_art_id)
+                .filter(|id| {
+                    !cache.holds_large(*id)
+                        && !self.covers_in_flight.contains(id)
+                        && !self.covers_unavailable.contains(id)
+                })
+                .collect()
+        };
+        if wanted.is_empty() {
+            return;
+        }
+        wanted.sort_unstable();
+        wanted.dedup();
+        for id in &wanted {
+            self.covers_in_flight.insert(*id);
+        }
+
+        let access = self.library_access.clone();
+        cx.spawn(async move |this, cx| {
+            for id in wanted {
+                let access = access.clone();
+                let decoded = cx
+                    .background_executor()
+                    .spawn(async move {
+                        access
+                            .cover_large(id)
+                            .and_then(|bytes| decode_cover_tile(&bytes))
+                    })
+                    .await;
+                let updated = this.update(cx, |view, cx| {
+                    view.covers_in_flight.remove(&id);
+                    let Some(image) = decoded else {
+                        view.covers_unavailable.insert(id);
+                        return;
+                    };
+                    cx.global::<Services>()
+                        .cover_art_cache
+                        .clone()
+                        .borrow_mut()
+                        .insert_large(id, image, cx);
+                    cx.notify();
+                });
+                if updated.is_err() {
+                    break;
+                }
+            }
+        })
+        .detach();
     }
 }
 
@@ -283,11 +415,20 @@ impl EventEmitter<FolderTracksRequested> for FoldersView {}
 impl EventEmitter<OpenLibrarySettings> for FoldersView {}
 
 impl Render for FoldersView {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let border = Colors::border(cx);
         let list_hover = Colors::list_hover(cx);
         let muted_fg = Colors::muted_foreground(cx);
         let accent = Colors::accent(cx);
+
+        // Caption heights follow the window's font size, so a scale change has
+        // to rebuild the tile rows. Reading it here keeps the two in step
+        // without a second observer.
+        let rem = f32::from(window.rem_size());
+        if (self.rem_size - rem).abs() > 0.5 {
+            self.rem_size = rem;
+            self.rebuild_items();
+        }
 
         if self.is_scanning && self.folders_all.is_empty() {
             return v_flex()
@@ -324,6 +465,10 @@ impl Render for FoldersView {
                 .child(div().px_4().child(tr().no_folders_match.clone()));
         }
 
+        if self.layout == FolderLayout::Grid {
+            return folders_grid::render_grid(self, cx);
+        }
+
         let item_sizes = self.item_sizes.clone();
         let own_folder = self.own_folder.clone();
         v_flex()
@@ -348,42 +493,7 @@ impl Render for FoldersView {
                                 if slot == 0
                                     && let Some(own) = own_folder.as_ref()
                                 {
-                                    let count_label = tr().n_tracks(own.track_count);
-                                    let own = own.clone();
-                                    return h_flex()
-                                        .w_full()
-                                        .h(px(FOLDER_ROW_HEIGHT))
-                                        .px_4()
-                                        .items_center()
-                                        .gap_3()
-                                        .border_b(px(1.))
-                                        .border_color(border)
-                                        .hover(|style| style.bg(list_hover))
-                                        .child(
-                                            Icon::default()
-                                                .path("icons/s1-tracks.svg")
-                                                .with_size(px(18.))
-                                                .flex_shrink_0()
-                                                .text_color(accent),
-                                        )
-                                        .child(
-                                            div()
-                                                .flex_1()
-                                                .overflow_hidden()
-                                                .text_ellipsis()
-                                                .child(tr().tracks_in_this_folder.clone()),
-                                        )
-                                        .child(
-                                            div()
-                                                .text_sm()
-                                                .text_color(muted_fg)
-                                                .child(count_label),
-                                        )
-                                        .id(ElementId::Name("folder-row-own".into()))
-                                        .on_click(cx.listener(move |_, _, _, cx| {
-                                            cx.emit(FolderTracksRequested { folder: own.clone() });
-                                        }))
-                                        .into_any_element();
+                                    return own_row(own.clone(), cx);
                                 }
                                 let row_ix = if own_folder.is_some() { slot - 1 } else { slot };
                                 let row = &view.rows[row_ix];
@@ -436,6 +546,54 @@ impl Render for FoldersView {
     }
 }
 
+/// The row that opens the tracks sitting directly in the folder being listed.
+///
+/// It is a full-width row in both layouts: it opens a track list rather than a
+/// subdirectory, so it has no album art to be a tile.
+pub(super) fn own_row(
+    own: music_library::FolderSummary,
+    cx: &mut Context<FoldersView>,
+) -> AnyElement {
+    let count_label = tr().n_tracks(own.track_count);
+    let folder = own.clone();
+    h_flex()
+        .w_full()
+        .h(px(FOLDER_ROW_HEIGHT))
+        .px_4()
+        .items_center()
+        .gap_3()
+        .border_b(px(1.))
+        .border_color(Colors::border(cx))
+        .hover(|style| style.bg(Colors::list_hover(cx)))
+        .child(
+            Icon::default()
+                .path("icons/s1-tracks.svg")
+                .with_size(px(18.))
+                .flex_shrink_0()
+                .text_color(Colors::accent(cx)),
+        )
+        .child(
+            div()
+                .flex_1()
+                .overflow_hidden()
+                .text_ellipsis()
+                .child(tr().tracks_in_this_folder.clone()),
+        )
+        .child(
+            div()
+                .text_sm()
+                .text_color(Colors::muted_foreground(cx))
+                .child(count_label),
+        )
+        .id(ElementId::Name("folder-row-own".into()))
+        .on_click(cx.listener(move |_, _, _, cx| {
+            cx.emit(FolderTracksRequested {
+                folder: folder.clone(),
+            });
+        }))
+        .into_any_element()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -446,6 +604,9 @@ mod tests {
             path: format!("/music/{name}"),
             track_count: tracks,
             album_count: 0,
+            cover_art_id: None,
+            artist: None,
+            year: None,
         }
     }
 

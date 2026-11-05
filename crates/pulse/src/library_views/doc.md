@@ -274,6 +274,17 @@ playing), and drive the `PlaybackQueue` on click.
   nothing playable under it is not listed at all). Filter is fuzzy on the name.
   Reloads on `CatalogChanged`; an empty top level offers the library settings,
   while an emptied nested folder just says there is no music.
+  **Two layouts, one listing.** `folder_layout` switches the level between the
+  row list and a grid of tiles (`folders_grid.rs`). A folder has no artwork of
+  its own — it is a path — so a tile borrows the art, artist and year of the
+  album most of its tracks belong to (`FolderSummary.cover_art_id/artist/year`,
+  chosen in `sqlite.rs`'s `FolderAccumulator`; ties break on the lower album id
+  so a rescan cannot swap the picture). The captions are switches
+  (`folders_show_cover/artist/year`), and with both text captions off a tile
+  falls back to its track count rather than an empty line. The grid reuses the
+  album grid's metrics and the shared large-cover cache, bounded by the visible
+  rows plus one of margin. The folder's own-files row stays full width in both
+  layouts: it opens a track list, not a subdirectory.
   **Ordering is the header's, not the view's.** A scoped level sorts its
   subdirectories by `FolderSort` (name A–Z/Z–A, fewest/most tracks), which the
   header popover writes to the settings store; the view observes the global and

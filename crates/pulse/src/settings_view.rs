@@ -23,7 +23,8 @@ use ui_components::settings::{SettingField, SettingGroup, SettingItem, SettingPa
 use crate::localization::tr;
 use crate::services::Services;
 use crate::settings_store::{
-    AlbumsArtistDisplay, AlbumsLayout, BlurBackground, FontScale, NowPlayingDetails, SettingsStore,
+    AlbumsArtistDisplay, AlbumsLayout, BlurBackground, FolderLayout, FontScale, NowPlayingDetails,
+    SettingsStore,
     StartupTab, WindowPreset, apply_font_scale, notify_save_error,
 };
 use crate::theme_colors::Colors;
@@ -66,6 +67,7 @@ pub fn build_settings_pages(
     cx: &App,
 ) -> SettingsPages {
     let albums_layout = cx.global::<SettingsStore>().albums_layout();
+    let folder_layout = cx.global::<SettingsStore>().folder_layout();
     let blur_mode = cx.global::<SettingsStore>().blur_background();
     let window_preset = cx.global::<SettingsStore>().window_preset();
     let mut pages = vec![
@@ -77,6 +79,7 @@ pub fn build_settings_pages(
             ))
             .group(window_group(window_size_inputs, window_preset))
             .group(library_pages_group(albums_layout))
+            .group(folders_group(folder_layout))
             .group(cover_view_group())
             .group(queue_group())
             .group(lyrics_group(sliders.lyrics))
@@ -1496,6 +1499,101 @@ fn library_pages_group(layout: AlbumsLayout) -> SettingGroup {
     // The artists row belongs here too: both are "how the library pages show
     // things", and a card holding a single row reads as clutter.
     group.item(artists_grouping_item())
+}
+
+/// How the Folders tab draws its levels.
+///
+/// The tile captions are switches rather than a fixed layout because a folder
+/// tree is not always an album tree: a folder of loose files has no artist and
+/// no year to show, and a library organised by something other than albums
+/// wants the art off rather than wrong.
+fn folders_group(layout: FolderLayout) -> SettingGroup {
+    let mut group = SettingGroup::new()
+        .title(tr().tab_folders.clone())
+        .item(
+            SettingItem::new(
+                tr().folder_layout.clone(),
+                SettingField::render(|_window, cx: &mut App| {
+                    let current = cx.global::<SettingsStore>().folder_layout();
+                    h_flex().items_center().justify_end().child(
+                        ButtonGroup::new("folders-layout-group")
+                            .small()
+                            .child(
+                                Button::new("folders-layout-list")
+                                    .label(tr().folder_layout_list.clone())
+                                    .selected(current == FolderLayout::List),
+                            )
+                            .child(
+                                Button::new("folders-layout-grid")
+                                    .label(tr().folder_layout_grid.clone())
+                                    .selected(current == FolderLayout::Grid),
+                            )
+                            .on_click(|clicks: &Vec<usize>, _, cx| {
+                                let Some(&ix) = clicks.first() else {
+                                    return;
+                                };
+                                let layout = match ix {
+                                    1 => FolderLayout::Grid,
+                                    _ => FolderLayout::List,
+                                };
+                                if let Err(e) =
+                                    cx.global_mut::<SettingsStore>().set_folder_layout(layout)
+                                {
+                                    notify_save_error(cx, e);
+                                }
+                            }),
+                    )
+                }),
+            )
+            .description(tr().folder_layout_desc.clone()),
+        );
+
+    if layout == FolderLayout::Grid {
+        for (id, title, description, get, set) in [
+            (
+                "folders-cover-toggle",
+                tr().folder_tile_cover.clone(),
+                tr().folder_tile_cover_desc.clone(),
+                SettingsStore::folders_show_cover as fn(&SettingsStore) -> bool,
+                SettingsStore::set_folders_show_cover as fn(&mut SettingsStore, bool) -> anyhow::Result<()>,
+            ),
+            (
+                "folders-artist-toggle",
+                tr().folder_tile_artist.clone(),
+                tr().folder_tile_artist_desc.clone(),
+                SettingsStore::folders_show_artist as fn(&SettingsStore) -> bool,
+                SettingsStore::set_folders_show_artist as fn(&mut SettingsStore, bool) -> anyhow::Result<()>,
+            ),
+            (
+                "folders-year-toggle",
+                tr().folder_tile_year.clone(),
+                tr().folder_tile_year_desc.clone(),
+                SettingsStore::folders_show_year as fn(&SettingsStore) -> bool,
+                SettingsStore::set_folders_show_year as fn(&mut SettingsStore, bool) -> anyhow::Result<()>,
+            ),
+        ] {
+            group = group.item(
+                SettingItem::new(
+                    title,
+                    SettingField::render(move |_window, cx: &mut App| {
+                        let checked = get(cx.global::<SettingsStore>());
+                        h_flex().items_center().justify_end().child(
+                            Switch::new(id).checked(checked).on_click(move |new_val, _, cx| {
+                                if let Err(e) =
+                                    set(cx.global_mut::<SettingsStore>(), *new_val)
+                                {
+                                    notify_save_error(cx, e);
+                                }
+                            }),
+                        )
+                    }),
+                )
+                .description(description),
+            );
+        }
+    }
+
+    group
 }
 
 fn cover_view_group() -> SettingGroup {

@@ -2,6 +2,7 @@ pub mod album_info;
 mod albums_grid;
 pub mod albums_view;
 pub mod artists_view;
+mod folders_grid;
 pub mod folders_view;
 pub(crate) mod fuzzy;
 pub mod grouped_tracks_view;

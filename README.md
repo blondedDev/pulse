@@ -188,6 +188,10 @@ Nothing touches the network unless you ask. Everything online lives on one
 
 No accounts, no analytics, no telemetry, no scrobbling.
 
+Updates are checked only when you press **Settings → General → Check for
+updates**. Pulse never calls GitHub on its own, and the download is verified
+against the release's published SHA-256 before it replaces the running binary.
+
 ## Requirements
 
 - Linux with **PipeWire** and `pipewire-alsa`

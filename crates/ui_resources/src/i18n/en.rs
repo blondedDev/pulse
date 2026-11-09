@@ -264,6 +264,12 @@ pub static EN: Strings = lang! {
     rescan_library: "Rescan Library...",
     version: "Version",
     up_to_date: "Pulse is up to date",
+    updates: "Updates",
+    check_for_updates: "Check for updates",
+    update_checking: "Checking for updates…",
+    update_downloading: "Downloading and installing…",
+    update_restarting: "Restarting…",
+    update_failed: "Update failed",
 
     lyrics: "Lyrics",
     lyrics_empty: "No lyrics",

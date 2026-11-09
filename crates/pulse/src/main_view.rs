@@ -155,6 +155,7 @@ pub struct MainView {
     _settings_observer: gpui::Subscription,
     _lang_subscription: Subscription,
     _activation_subscription: gpui::Subscription,
+    _updater_observe: gpui::Subscription,
     sleep_timer: Option<Entity<crate::sleep_timer::SleepTimer>>,
     scan_indicator: Entity<crate::library_scan_indicator::LibraryScanIndicator>,
     _sleep_timer_observe: Option<Subscription>,
@@ -611,6 +612,11 @@ impl MainView {
             .as_ref()
             .map(|timer| cx.observe(timer, |_, _, cx| cx.notify()));
 
+        // The update row lives in the settings page, which is built once; this
+        // is what makes its status line follow the download.
+        let updater = cx.global::<crate::services::Services>().updater.clone();
+        let updater_observe = cx.observe(&updater, |_, _, cx| cx.notify());
+
         let startup_tab = {
             let settings = cx.global::<crate::settings_store::SettingsStore>();
             LibraryRootTab::resolve_startup(settings.startup_tab(), settings)
@@ -687,6 +693,7 @@ impl MainView {
             _settings_observer: settings_observer,
             _lang_subscription: lang_subscription,
             _activation_subscription: activation_subscription,
+            _updater_observe: updater_observe,
             sleep_timer,
             scan_indicator: crate::library_scan_indicator::indicator(cx),
             _sleep_timer_observe: sleep_timer_observe,

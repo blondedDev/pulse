@@ -60,6 +60,9 @@ pub struct Services {
     pub remote_server: Rc<RefCell<Option<pulse_remote::RemoteServer>>>,
     remote_queue_cache: Rc<RefCell<RemoteQueueCache>>,
     library_rev: Arc<AtomicU64>,
+    /// The manual update check. Lives here so the Settings row can reach it
+    /// from a render closure that only has `App`.
+    pub updater: Entity<crate::updater::Updater>,
 }
 
 type RemoteQueueCache = Option<(u64, Arc<Vec<pulse_remote::QueueItem>>)>;
@@ -154,6 +157,8 @@ impl Services {
         })
         .detach();
 
+        let updater = cx.new(|_| crate::updater::Updater::new());
+
         Ok(Services {
             output,
             engine_manager,
@@ -178,6 +183,7 @@ impl Services {
             remote_server: Rc::new(RefCell::new(None)),
             remote_queue_cache: Rc::new(RefCell::new(None)),
             library_rev: Arc::new(AtomicU64::new(0)),
+            updater,
             opener,
             is_buffering: Arc::new(AtomicBool::new(false)),
             resume_at: Rc::new(std::cell::Cell::new(None)),

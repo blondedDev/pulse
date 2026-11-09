@@ -91,7 +91,7 @@ pub fn build_settings_pages(
             cx,
             sleep_timer_controls,
         ))
-        .group(version_group());
+        .group(version_group(cx.global::<Services>().updater.clone()));
     let general_ix = pages.len();
     pages.push(general);
 
@@ -848,7 +848,7 @@ fn remote_group(remote_port_input: Entity<InputState>) -> SettingGroup {
     group
 }
 
-fn version_group() -> SettingGroup {
+fn version_group(updater: Entity<crate::updater::Updater>) -> SettingGroup {
     SettingGroup::new()
         .item(SettingItem::new(
             tr().version.clone(),
@@ -859,6 +859,57 @@ fn version_group() -> SettingGroup {
                         .text_color(Colors::muted_foreground(cx))
                         .child(env!("CARGO_PKG_VERSION")),
                 )
+            }),
+        ))
+        // Manual update check, next to the version it is about. Nothing here
+        // runs at launch: Pulse stays offline until this button is pressed.
+        .item(SettingItem::new(
+            tr().updates.clone(),
+            SettingField::render(move |_window, cx: &mut App| {
+                use crate::updater::UpdateState;
+
+                let state = updater.read(cx).state().clone();
+                let busy = state.busy();
+                let (status, detail) = match &state {
+                    UpdateState::Idle => (None, None),
+                    UpdateState::Checking => (Some(tr().update_checking.clone()), None),
+                    UpdateState::UpToDate => (Some(tr().up_to_date.clone()), None),
+                    UpdateState::Downloading { .. } => (Some(tr().update_downloading.clone()), None),
+                    UpdateState::Restarting { .. } => (Some(tr().update_restarting.clone()), None),
+                    UpdateState::Failed(error) => {
+                        (Some(tr().update_failed.clone()), Some(error.clone()))
+                    }
+                };
+                let on_click = updater.clone();
+
+                v_flex()
+                    .items_end()
+                    .gap_1()
+                    .when_some(status, |this, status| {
+                        this.child(
+                            div()
+                                .text_sm()
+                                .text_color(Colors::muted_foreground(cx))
+                                .child(status),
+                        )
+                    })
+                    .when_some(detail, |this, detail| {
+                        this.child(
+                            div()
+                                .text_xs()
+                                .max_w(px(260.))
+                                .text_color(Colors::muted_foreground(cx))
+                                .child(detail),
+                        )
+                    })
+                    .child(
+                        Button::new("check-updates")
+                            .label(tr().check_for_updates.clone())
+                            .disabled(busy)
+                            .on_click(move |_, _, cx| {
+                                on_click.update(cx, |this, cx| this.check(cx));
+                            }),
+                    )
             }),
         ))
         // A signature, not UI copy: a literal rather than a translation key, and

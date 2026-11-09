@@ -818,6 +818,13 @@ struct FolderTile {
     year: Option<i32>,
 }
 
+/// How many album covers a folder summary carries.
+///
+/// The grid draws at most four in a collage and picks one at random otherwise,
+/// so eight is enough variety without making every folder listing read eight
+/// rows of art it will never show.
+const FOLDER_COVERS: usize = 8;
+
 /// Everything a folder's rows say about it, gathered in one pass.
 ///
 /// The counts used to come from `COUNT(*)`/`COUNT(DISTINCT …)` in SQL, but the
@@ -856,28 +863,38 @@ impl FolderAccumulator {
         self.per_album.keys().filter(|id| id.is_some()).count() as i64
     }
 
-    /// The tile for this folder: the album most of its tracks belong to.
+    /// The tile for this folder: every album's cover, the dominant album's
+    /// artist and year.
     ///
-    /// Ties break on the lower album id, so a rescan cannot swap two equally
-    /// sized albums back and forth and change the folder's picture.
-    fn tile(&self) -> FolderTile {
-        let dominant = self
+    /// Covers are ranked by the number of tracks their album contributes, ties
+    /// breaking on the lower album id, so a rescan cannot reorder two equally
+    /// sized albums. Duplicates are dropped: two albums can point at the same
+    /// cover file, and a collage showing it twice looks like a bug.
+    fn tile(&self) -> (Vec<i64>, Option<String>, Option<i32>) {
+        let mut ranked: Vec<(i64, i64)> = self
             .per_album
             .iter()
             .filter_map(|(id, count)| id.map(|id| (id, *count)))
-            .max_by_key(|(id, count)| (*count, std::cmp::Reverse(*id)))
-            .map(|(id, _)| id);
-        match dominant.and_then(|id| self.albums.get(&id)) {
-            Some(tile) => FolderTile {
-                cover_art_id: tile.cover_art_id,
-                artist: tile.artist.clone(),
-                year: tile.year,
-            },
-            None => FolderTile {
-                cover_art_id: None,
-                artist: None,
-                year: None,
-            },
+            .collect();
+        ranked.sort_by_key(|(id, count)| (std::cmp::Reverse(*count), *id));
+
+        let mut covers: Vec<i64> = Vec::new();
+        for (id, _) in &ranked {
+            let Some(cover) = self.albums.get(id).and_then(|tile| tile.cover_art_id) else {
+                continue;
+            };
+            if covers.contains(&cover) {
+                continue;
+            }
+            covers.push(cover);
+            if covers.len() == FOLDER_COVERS {
+                break;
+            }
+        }
+
+        match ranked.first().and_then(|(id, _)| self.albums.get(id)) {
+            Some(tile) => (covers, tile.artist.clone(), tile.year),
+            None => (covers, None, None),
         }
     }
 }
@@ -2218,15 +2235,15 @@ impl LibraryRepository for SqliteLibrary {
             if folder.track_count == 0 {
                 continue;
             }
-            let tile = folder.tile();
+            let (covers, artist, year) = folder.tile();
             summaries.push(FolderSummary {
                 name: folder_display_name(&path),
                 path,
                 track_count: folder.track_count,
                 album_count: folder.album_count(),
-                cover_art_id: tile.cover_art_id,
-                artist: tile.artist,
-                year: tile.year,
+                cover_art_ids: covers,
+                artist,
+                year,
             });
         }
         summaries.sort_by_key(|s| s.name.to_lowercase());
@@ -2263,7 +2280,7 @@ impl LibraryRepository for SqliteLibrary {
             let mut summaries: Vec<FolderSummary> = folders
                 .into_iter()
                 .map(|(name, folder)| {
-                    let tile = folder.tile();
+                    let (covers, artist, year) = folder.tile();
                     FolderSummary {
                         // The host separator, because the track paths these come from
                         // are host-native; joining with a literal `/` built folder
@@ -2272,9 +2289,9 @@ impl LibraryRepository for SqliteLibrary {
                         name,
                         track_count: folder.track_count,
                         album_count: folder.album_count(),
-                        cover_art_id: tile.cover_art_id,
-                        artist: tile.artist,
-                        year: tile.year,
+                        cover_art_ids: covers,
+                        artist,
+                        year,
                     }
                 })
                 .collect();
@@ -4130,11 +4147,11 @@ mod tests {
         assert_eq!(loose.album_count, 1);
     }
 
-    /// The grid tile takes its art, artist and year from the album the folder
-    /// mostly holds, not from whichever track the query happened to return
-    /// first. A folder is a path, so this is the only way it can have a picture.
+    /// A folder's tile takes its artist and year from the album the folder
+    /// mostly holds, and lists that album's art first. A folder is a path, so
+    /// this is the only way it can have a picture.
     #[test]
-    fn child_folders_borrow_the_dominant_albums_art() {
+    fn child_folders_list_the_albums_art() {
         let lib = open_test_lib();
         let cover_id: i64 = {
             let conn = lib.conn.lock().unwrap();
@@ -4183,9 +4200,115 @@ mod tests {
             .unwrap();
 
         assert_eq!(show.album_count, 2);
-        assert_eq!(show.cover_art_id, Some(cover_id), "two tracks against one");
+        assert_eq!(
+            show.cover_art_ids,
+            vec![cover_id],
+            "the album without art contributes no cover"
+        );
         assert_eq!(show.artist.as_deref(), Some("The Band"));
         assert_eq!(show.year, Some(1999));
+    }
+
+    /// The tile may show any album below the folder, so the summary carries all
+    /// their covers — ranked by contribution, with a cover shared by two albums
+    /// listed once.
+    #[test]
+    fn folder_covers_follow_contribution_and_drop_duplicates() {
+        let lib = open_test_lib();
+        let insert_cover = |hash: &str| {
+            let conn = lib.conn.lock().unwrap();
+            conn.execute(
+                "INSERT INTO cover_art (hash, small, large, source_path, embedded) \
+                 VALUES (?1, x'', x'', ?2, 0)",
+                rusqlite::params![hash, format!("/music/{hash}.jpg")],
+            )
+            .unwrap();
+            conn.last_insert_rowid()
+        };
+        let shared = insert_cover("shared");
+        let lone = insert_cover("lone");
+        let artist = lib.upsert_artist("The Band").unwrap();
+
+        let big = lib.upsert_album("Big", Some(2001), Some(shared)).unwrap();
+        let also = lib.upsert_album("Also", Some(2002), Some(shared)).unwrap();
+        let small = lib.upsert_album("Small", Some(2003), Some(lone)).unwrap();
+        lib.set_album_artists(big, &[(artist, 0)]).unwrap();
+
+        for (path, album) in [
+            ("/music/Show/a.flac", big),
+            ("/music/Show/b.flac", big),
+            ("/music/Show/c.flac", also),
+            ("/music/Show/d.flac", small),
+        ] {
+            let id = lib
+                .upsert_track(
+                    &NewTrack {
+                        path: path.into(),
+                        ..Default::default()
+                    },
+                    Some(album),
+                    &[(artist, 0)],
+                )
+                .unwrap();
+            lib.place_for_tests(id, "/music", path);
+        }
+
+        let show = lib
+            .child_folders("/music")
+            .unwrap()
+            .into_iter()
+            .find(|f| f.name == "Show")
+            .unwrap();
+
+        assert_eq!(
+            show.cover_art_ids,
+            vec![shared, lone],
+            "two tracks against one, and the shared cover appears once"
+        );
+    }
+
+    /// A folder can hold more albums than a tile can ever use; the summary stops
+    /// at [`FOLDER_COVERS`] so a huge library does not carry art it cannot show.
+    #[test]
+    fn a_folder_carries_at_most_eight_covers() {
+        let lib = open_test_lib();
+        let artist = lib.upsert_artist("The Band").unwrap();
+        for i in 0..(FOLDER_COVERS + 2) {
+            let cover = {
+                let conn = lib.conn.lock().unwrap();
+                conn.execute(
+                    "INSERT INTO cover_art (hash, small, large, source_path, embedded) \
+                     VALUES (?1, x'', x'', ?2, 0)",
+                    rusqlite::params![format!("c{i}"), format!("/music/c{i}.jpg")],
+                )
+                .unwrap();
+                conn.last_insert_rowid()
+            };
+            let album = lib
+                .upsert_album(&format!("Album {i}"), None, Some(cover))
+                .unwrap();
+            let path = format!("/music/Show/{i}.flac");
+            let id = lib
+                .upsert_track(
+                    &NewTrack {
+                        path: path.clone(),
+                        ..Default::default()
+                    },
+                    Some(album),
+                    &[(artist, 0)],
+                )
+                .unwrap();
+            lib.place_for_tests(id, "/music", &path);
+        }
+
+        let show = lib
+            .child_folders("/music")
+            .unwrap()
+            .into_iter()
+            .find(|f| f.name == "Show")
+            .unwrap();
+
+        assert_eq!(show.cover_art_ids.len(), FOLDER_COVERS);
     }
 
     /// A folder of loose files has no album, so it has no picture to show —
@@ -4202,7 +4325,7 @@ mod tests {
             .find(|f| f.name == "Loose")
             .unwrap();
 
-        assert_eq!(loose.cover_art_id, None);
+        assert_eq!(loose.cover_art_ids, Vec::<i64>::new());
         assert_eq!(loose.artist, None);
         assert_eq!(loose.year, None);
     }

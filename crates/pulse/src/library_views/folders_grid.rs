@@ -25,6 +25,38 @@ const TILE_GAP: f32 = 16.;
 const TILE_PAD: f32 = 8.;
 const TILE_TEXT_GAP: f32 = 4.;
 const TILE_RADIUS: f32 = 6.;
+/// How many covers a folder tile draws in a collage.
+pub(super) const COLLAGE_COVERS: usize = 4;
+/// The gap between collage cells. Two pixels reads as a seam rather than a
+/// layout, which is what a quartered picture wants.
+const COLLAGE_GAP: f32 = 2.;
+
+/// Choose the covers a folder tile draws.
+///
+/// Fewer than four candidates keep a single cover: a 2×2 of one picture is just
+/// a smaller picture. Four or more fill a collage with distinct albums, so the
+/// tile says "this folder holds several albums" instead of always looking like
+/// whichever album happens to own the most tracks. The choice is made when the
+/// rows are rebuilt, not on every paint, so the grid is stable while it is on
+/// screen and refreshes when the folder, sort, layout or catalog changes.
+pub(super) fn pick_tile_covers(covers: &[i64], rng: &mut impl rand::Rng) -> Vec<i64> {
+    if covers.is_empty() {
+        return Vec::new();
+    }
+    if covers.len() < COLLAGE_COVERS {
+        let ix = rng.random_range(0..covers.len());
+        return vec![covers[ix]];
+    }
+    // Partial Fisher–Yates: four distinct picks in the order they were drawn,
+    // so the collage is not always laid out in contribution order.
+    let mut pool = covers.to_vec();
+    for i in 0..COLLAGE_COVERS {
+        let j = rng.random_range(i..pool.len());
+        pool.swap(i, j);
+    }
+    pool.truncate(COLLAGE_COVERS);
+    pool
+}
 
 struct TileParams {
     columns: usize,
@@ -165,14 +197,20 @@ fn grid_row(
     if start >= end {
         return div().into_any_element();
     }
-    let covers: Vec<Option<Arc<RenderImage>>> = if p.show_cover {
+    let covers: Vec<Vec<Option<Arc<RenderImage>>>> = if p.show_cover {
         let cache = cx.global::<Services>().cover_art_cache.clone();
         let mut cache = cache.borrow_mut();
         (start..end)
-            .map(|ix| cache.peek_large(view.rows[ix].summary.cover_art_id))
+            .map(|ix| {
+                view.rows[ix]
+                    .tile_covers
+                    .iter()
+                    .map(|id| cache.peek_large(Some(*id)))
+                    .collect()
+            })
             .collect()
     } else {
-        vec![None; end - start]
+        vec![Vec::new(); end - start]
     };
     let mut row = h_flex()
         .w_full()
@@ -180,7 +218,7 @@ fn grid_row(
         .gap(px(TILE_GAP))
         .items_start();
     for (slot, ix) in (start..end).enumerate() {
-        row = row.child(grid_tile(view, ix, covers[slot].as_ref(), p, cx));
+        row = row.child(grid_tile(view, ix, &covers[slot], p, cx));
     }
     row.into_any_element()
 }
@@ -188,7 +226,7 @@ fn grid_row(
 fn grid_tile(
     view: &FoldersView,
     ix: usize,
-    cover: Option<&Arc<RenderImage>>,
+    covers: &[Option<Arc<RenderImage>>],
     p: &TileParams,
     cx: &mut Context<FoldersView>,
 ) -> AnyElement {
@@ -204,13 +242,7 @@ fn grid_tile(
         .rounded(px(TILE_RADIUS + TILE_PAD))
         .hover(|style| style.bg(p.list_hover));
     if p.show_cover {
-        tile = tile.child(cover_tile(
-            cover,
-            p.cover_size,
-            TILE_RADIUS,
-            p.muted,
-            p.muted_fg,
-        ));
+        tile = tile.child(tile_cover(covers, p));
     }
     tile.child(
         div()
@@ -242,6 +274,51 @@ fn grid_tile(
     .into_any_element()
 }
 
+/// The picture area of a tile: one cover, or a 2×2 collage when the row drew
+/// four.
+fn tile_cover(covers: &[Option<Arc<RenderImage>>], p: &TileParams) -> AnyElement {
+    if covers.len() >= COLLAGE_COVERS {
+        return collage(covers, p);
+    }
+    cover_tile(
+        covers.first().and_then(|cover| cover.as_ref()),
+        p.cover_size,
+        TILE_RADIUS,
+        p.muted,
+        p.muted_fg,
+    )
+}
+
+/// The side of one collage cell, for a square picture area.
+fn collage_cell(cover_size: f32) -> f32 {
+    ((cover_size - COLLAGE_GAP) / 2.).max(1.)
+}
+
+/// Four covers in a 2×2, with a hairline seam so they read as four albums
+/// rather than one strange picture.
+fn collage(covers: &[Option<Arc<RenderImage>>], p: &TileParams) -> AnyElement {
+    let cell = collage_cell(p.cover_size);
+    let radius = TILE_RADIUS / 2.;
+    let mut grid = v_flex()
+        .w(px(p.cover_size))
+        .h(px(p.cover_size))
+        .gap(px(COLLAGE_GAP));
+    for pair in covers.chunks(2).take(2) {
+        let mut line = h_flex().gap(px(COLLAGE_GAP));
+        for cover in pair {
+            line = line.child(cover_tile(
+                cover.as_ref(),
+                cell,
+                radius,
+                p.muted,
+                p.muted_fg,
+            ));
+        }
+        grid = grid.child(line);
+    }
+    grid.into_any_element()
+}
+
 /// Tile rows for a list of `row_count` folders, plus the padding and the
 /// own-files row that sit above them.
 pub(super) fn grid_item_sizes(
@@ -264,6 +341,7 @@ pub(super) fn grid_item_sizes(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rand::SeedableRng as _;
 
     fn folder(
         name: &str,
@@ -276,7 +354,7 @@ mod tests {
             path: format!("/music/{name}"),
             track_count: tracks,
             album_count: 1,
-            cover_art_id: None,
+            cover_art_ids: Vec::new(),
             artist: artist.map(str::to_string),
             year,
         }
@@ -316,5 +394,70 @@ mod tests {
     #[test]
     fn an_empty_grid_is_just_the_padding() {
         assert_eq!(grid_item_sizes(0, false, 3, 120., 16.).len(), 1);
+    }
+
+    #[test]
+    fn fewer_than_four_covers_keep_one() {
+        let mut rng = rand::rngs::StdRng::seed_from_u64(7);
+        for len in 1..COLLAGE_COVERS {
+            let covers: Vec<i64> = (0..len as i64).collect();
+            let picked = pick_tile_covers(&covers, &mut rng);
+            assert_eq!(picked.len(), 1, "{len} candidates still show one cover");
+            assert!(covers.contains(&picked[0]));
+        }
+        assert!(pick_tile_covers(&[], &mut rng).is_empty());
+    }
+
+    #[test]
+    fn four_or_more_covers_fill_a_collage_with_distinct_albums() {
+        let mut rng = rand::rngs::StdRng::seed_from_u64(11);
+        let covers: Vec<i64> = (0..6).collect();
+        let picked = pick_tile_covers(&covers, &mut rng);
+        assert_eq!(picked.len(), COLLAGE_COVERS);
+        let unique: std::collections::HashSet<i64> = picked.iter().copied().collect();
+        assert_eq!(unique.len(), COLLAGE_COVERS, "no album shown twice");
+        assert!(picked.iter().all(|id| covers.contains(id)));
+    }
+
+    #[test]
+    fn the_same_seed_picks_the_same_covers() {
+        let covers: Vec<i64> = (0..8).collect();
+        let a = pick_tile_covers(&covers, &mut rand::rngs::StdRng::seed_from_u64(3));
+        let b = pick_tile_covers(&covers, &mut rand::rngs::StdRng::seed_from_u64(3));
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn collage_cells_fill_the_picture_area() {
+        for size in [120., 160., 200.] {
+            let cell = collage_cell(size);
+            assert!(
+                (cell * 2. + COLLAGE_GAP - size).abs() < 0.01,
+                "two cells and the seam should exactly span {size}"
+            );
+        }
+        assert_eq!(collage_cell(1.), 1., "a tiny tile still gets a visible cell");
+    }
+
+    /// The picture area has to build for both shapes without a window: this is
+    /// the one place the grid touches elements, and a panic here would take the
+    /// whole page down.
+    #[test]
+    fn both_tile_shapes_build() {
+        let p = TileParams {
+            columns: 4,
+            tile_width: 168.,
+            cover_size: 152.,
+            title_height: 20.,
+            subtitle_height: 18.,
+            list_hover: gpui::black(),
+            muted: gpui::black(),
+            muted_fg: gpui::black(),
+            show_cover: true,
+            show_artist: true,
+            show_year: true,
+        };
+        let _single = tile_cover(&[], &p);
+        let _collage = tile_cover(&[None, None, None, None], &p);
     }
 }

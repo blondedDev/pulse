@@ -179,17 +179,19 @@ pub struct FolderSummary {
     pub track_count: i64,
     /// Distinct albums below this folder.
     pub album_count: i64,
-    /// Artwork for the grid tile, borrowed from the album most of this folder's
-    /// tracks belong to.
+    /// Artwork the grid tile may show, one entry per album below this folder,
+    /// most-contributing album first.
     ///
-    /// A folder is a path, not a record, so it has no art of its own. The album
-    /// that contributes the most tracks is the one an album directory holds,
-    /// which is what a tile should look like. `None` for a folder of loose files
-    /// or one whose album has no embedded art.
-    pub cover_art_id: Option<i64>,
-    /// The album artist behind [`Self::cover_art_id`], for the tile caption.
+    /// A folder is a path, not a record, so it has no art of its own. Listing
+    /// every album's cover rather than only the dominant one lets the grid pick
+    /// a different picture each time it is rebuilt: a folder holding twenty
+    /// albums should not always look like whichever one happens to own the most
+    /// tracks. Empty for a folder of loose files or one whose albums have no
+    /// embedded art.
+    pub cover_art_ids: Vec<i64>,
+    /// The dominant album's artist, for the tile caption.
     pub artist: Option<String>,
-    /// The year of that album, for the tile caption.
+    /// The dominant album's year, for the tile caption.
     pub year: Option<i32>,
 }
 

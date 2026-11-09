@@ -276,14 +276,18 @@ playing), and drive the `PlaybackQueue` on click.
   while an emptied nested folder just says there is no music.
   **Two layouts, one listing.** `folder_layout` switches the level between the
   row list and a grid of tiles (`folders_grid.rs`). A folder has no artwork of
-  its own — it is a path — so a tile borrows the art, artist and year of the
-  album most of its tracks belong to (`FolderSummary.cover_art_id/artist/year`,
-  chosen in `sqlite.rs`'s `FolderAccumulator`; ties break on the lower album id
-  so a rescan cannot swap the picture). The captions are switches
+  its own — it is a path — so a tile borrows art, artist and year from the
+  albums below it (`FolderSummary.cover_art_ids/artist/year`, chosen in
+  `sqlite.rs`'s `FolderAccumulator`). Every album's cover is carried, ranked by
+  how many tracks it contributes; a tile draws one at random, or a 2×2 collage
+  of four distinct albums when the folder holds four or more. The choice is made
+  when the rows are rebuilt, so a folder refreshes when you enter it, change the
+  sort or layout, or rescan — not on every paint. The caption still follows the
+  dominant album. The captions are switches
   (`folders_show_cover/artist/year`), and with both text captions off a tile
   falls back to its track count rather than an empty line. The grid reuses the
-  album grid's metrics and the shared large-cover cache, bounded by the visible
-  rows plus one of margin. The folder's own-files row stays full width in both
+  album grid's metrics and the shared large-cover cache, bounded by the covers
+  on screen plus one of margin. The folder's own-files row stays full width in both
   layouts: it opens a track list, not a subdirectory.
   **Ordering is the header's, not the view's.** A scoped level sorts its
   subdirectories by `FolderSort` (name A–Z/Z–A, fewest/most tracks), which the

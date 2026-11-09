@@ -474,7 +474,7 @@ impl LibraryView {
                 path,
                 track_count: 0,
                 album_count: 0,
-                cover_art_id: None,
+                cover_art_ids: Vec::new(),
                 artist: None,
                 year: None,
             });

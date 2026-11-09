@@ -42,16 +42,22 @@ pub struct FolderTracksRequested {
 pub(super) struct FolderRow {
     pub(super) summary: music_library::FolderSummary,
     pub(super) name: SharedString,
+    /// The covers this row's tile draws: one for a single-cover tile, four for
+    /// a collage. Chosen when the rows are rebuilt, not when they are painted,
+    /// so scrolling and hovering do not reshuffle the grid.
+    pub(super) tile_covers: Vec<i64>,
     count_label: SharedString,
 }
 
 impl FolderRow {
-    fn build(summary: music_library::FolderSummary) -> Self {
+    fn build(summary: music_library::FolderSummary, rng: &mut impl rand::Rng) -> Self {
         let count_label = tr().n_tracks(summary.track_count).into();
         let name = summary.name.clone().into();
+        let tile_covers = folders_grid::pick_tile_covers(&summary.cover_art_ids, rng);
         Self {
             summary,
             name,
+            tile_covers,
             count_label,
         }
     }
@@ -259,14 +265,21 @@ impl FoldersView {
             // for a number nothing reads.
             album_count: 0,
             // This row opens a track list, so it is never drawn as a tile.
-            cover_art_id: None,
+            cover_art_ids: Vec::new(),
             artist: None,
             year: None,
         })
     }
 
-    fn build_rows(folders: &[music_library::FolderSummary]) -> Vec<FolderRow> {
-        folders.iter().cloned().map(FolderRow::build).collect()
+    fn build_rows(
+        folders: &[music_library::FolderSummary],
+        rng: &mut impl rand::Rng,
+    ) -> Vec<FolderRow> {
+        folders
+            .iter()
+            .cloned()
+            .map(|folder| FolderRow::build(folder, rng))
+            .collect()
     }
 
     fn make_item_sizes(row_count: usize, has_own_row: bool) -> Vec<Size<Pixels>> {
@@ -308,7 +321,7 @@ impl FoldersView {
             .map(|ix| self.folders_all[ix].clone())
             .collect()
         };
-        self.rows = Self::build_rows(&filtered);
+        self.rows = Self::build_rows(&filtered, &mut rand::rng());
         self.rebuild_items();
     }
 
@@ -354,12 +367,21 @@ impl FoldersView {
         cx: &mut Context<Self>,
     ) {
         let cache = cx.global::<Services>().cover_art_cache.clone();
-        let capacity = capacity_for_peak_visible(&mut self.visible_span_peak, folders.len());
+        // A collage tile draws four covers, a single tile one. The capacity has
+        // to follow the pictures on screen rather than the tiles, or eviction
+        // re-decodes every collage on each frame.
+        let on_screen: usize = folders
+            .clone()
+            .filter_map(|ix| self.rows.get(ix))
+            .map(|row| row.tile_covers.len())
+            .sum();
+        let capacity = capacity_for_peak_visible(&mut self.visible_span_peak, on_screen);
         cache.borrow_mut().set_large_capacity(capacity, cx);
         let mut wanted: Vec<i64> = {
             let cache = cache.borrow();
             folders
-                .filter_map(|ix| self.rows.get(ix)?.summary.cover_art_id)
+                .filter_map(|ix| self.rows.get(ix))
+                .flat_map(|row| row.tile_covers.iter().copied())
                 .filter(|id| {
                     !cache.holds_large(*id)
                         && !self.covers_in_flight.contains(id)
@@ -604,7 +626,7 @@ mod tests {
             path: format!("/music/{name}"),
             track_count: tracks,
             album_count: 0,
-            cover_art_id: None,
+            cover_art_ids: Vec::new(),
             artist: None,
             year: None,
         }

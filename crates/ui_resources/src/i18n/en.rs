@@ -304,7 +304,7 @@ pub static EN: Strings = lang! {
     discord_line_album: "Album",
     discord_line_year: "Year",
     discord_show_cover: "Cover art",
-    discord_show_cover_desc: "Show the album cover, looked up by the artist and album tags. One lookup per album, then cached. An album that cannot be matched shows no cover rather than the wrong one.",
+    discord_show_cover_desc: "Show the album cover, looked up by album artist and album title. Karaoke, tribute and deluxe editions are skipped, and the answer is re-checked after 30 days. An album with no confident match shows no cover rather than the wrong one.",
     discord_cover_text: "Cover tooltip",
     discord_cover_text_desc: "What shows when someone hovers the cover. Only visible when cover art is on.",
     discord_timers: "Timer",

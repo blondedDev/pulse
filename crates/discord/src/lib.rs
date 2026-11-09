@@ -28,6 +28,10 @@ pub fn is_available() -> bool {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Presence {
     pub artist: String,
+    /// The album's credited artists, when they differ from the track artist.
+    /// Used for the cover lookup, because compilations are credited to the
+    /// album artist, not to whoever sings the current track.
+    pub album_artist: Option<String>,
     pub title: String,
     pub album: Option<String>,
     pub year: Option<i32>,

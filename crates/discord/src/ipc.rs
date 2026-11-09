@@ -168,7 +168,8 @@ impl Worker {
         p: &Presence,
     ) -> Result<(), discord_rich_presence::error::Error> {
         let art = if p.settings.show_cover {
-            self.art.resolve(&p.artist, p.album.as_deref())
+            self.art
+                .resolve(p.album_artist.as_deref(), &p.artist, p.album.as_deref())
         } else {
             None
         };
@@ -283,6 +284,7 @@ mod tests {
     fn presence() -> Presence {
         Presence {
             artist: "Drake".to_string(),
+            album_artist: None,
             title: "Take Care".to_string(),
             album: Some("Take Care".to_string()),
             year: Some(2011),

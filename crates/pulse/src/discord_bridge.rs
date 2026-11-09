@@ -20,6 +20,7 @@ impl Global for DiscordService {}
 
 struct CurrentMeta {
     artist: String,
+    album_artist: Option<String>,
     title: String,
     album: Option<String>,
     year: Option<i32>,
@@ -92,7 +93,8 @@ pub fn refresh(cx: &App) {
         // it, in which case it is re-sent marked as paused. Sending it here
         // unconditionally would put it back up for someone who did not ask.
         if cx.global::<SettingsStore>().discord_presence().keep_on_pause {
-            send_current(cx, &st, st.anchor_pos);
+            let pos = st.anchor_pos;
+            send_current(cx, &st, pos);
         }
         return;
     }
@@ -189,6 +191,7 @@ fn send_current(cx: &App, st: &BridgeState, position: Duration) {
     let settings = cx.global::<SettingsStore>().discord_presence().clone();
     handle.set(Presence {
         artist: meta.artist.clone(),
+        album_artist: meta.album_artist.clone(),
         title: meta.title.clone(),
         album: meta.album.clone(),
         year: meta.year,
@@ -264,12 +267,15 @@ fn read_current_meta(cx: &App, duration: Duration) -> Option<CurrentMeta> {
     let services = cx.global::<Services>();
     let queue = services.playback_queue.borrow();
     let track = queue.current_track()?;
+    let album_id = track.album_id;
     let artist = services.library.track_artists(track.id).join(", ");
-    let album = track
-        .album_id
-        .and_then(|id| services.library.album_title(id));
+    let album = album_id.and_then(|id| services.library.album_title(id));
+    let album_artist = album_id
+        .map(|id| services.library.album_artists(id).join(", "))
+        .filter(|name| !name.is_empty());
     Some(CurrentMeta {
         artist,
+        album_artist,
         title: track.title.clone(),
         album,
         year: track.year,

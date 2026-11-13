@@ -23,6 +23,9 @@ One library. No account. No cloud.
   days, counted from your own history.
 - **Housekeeping** — duplicate finder by folder priority, rotated database
   backups, integrity report and portable export.
+- **Get music** — search Amazon Music, Qobuz, Tidal and friends through
+  lucida.to without leaving the app, then let the library pick the download up
+  on its own. `Ctrl+Shift+G`.
 
 ## Offline by default
 
@@ -37,6 +40,12 @@ Nothing touches the network unless you ask. Everything online starts off:
 No accounts, analytics, telemetry or scrobbling. Updates are checked only when
 you press **Settings → General → Check for updates**, and the download is
 verified against the release's SHA-256 before it replaces the running binary.
+
+**Get music** is a handoff, not a downloader. Pulse builds the lucida.to page
+for your search and opens it in your browser; it never contacts lucida itself,
+never scrapes it, and keeps no record of what you looked for. Add a download
+folder in **Settings → Online** and whatever lands in it is indexed a few
+seconds later.
 
 ## Install
 

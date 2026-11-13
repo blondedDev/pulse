@@ -69,14 +69,16 @@ pub enum PaletteAction {
     ToggleLyrics,
     ToggleCoverMode,
     OpenSettings,
+    AcquireMusic,
 }
 
 impl PaletteAction {
-    const ALL: [Self; 4] = [
+    const ALL: [Self; 5] = [
         Self::ToggleQueue,
         Self::ToggleLyrics,
         Self::ToggleCoverMode,
         Self::OpenSettings,
+        Self::AcquireMusic,
     ];
 
     fn label(self) -> SharedString {
@@ -85,6 +87,7 @@ impl PaletteAction {
             Self::ToggleLyrics => "Toggle lyrics",
             Self::ToggleCoverMode => "Toggle cover mode",
             Self::OpenSettings => "Open settings",
+            Self::AcquireMusic => "Get music…",
         }
         .into()
     }
@@ -600,6 +603,10 @@ impl gpui::Render for CommandPalette {
             .on_action(cx.listener(|this, _: &PaletteNext, _, cx| this.select_next(cx)))
             .on_action(cx.listener(|this, _: &PalettePrev, _, cx| this.select_prev(cx)))
             .w(px(PANEL_WIDTH))
+            // Keep the backdrop out of the hit-test list for clicks that land
+            // on the panel itself: without it the backdrop's mouse-down ran
+            // after the row's and closed the palette before the click landed.
+            .occlude()
             .overflow_hidden()
             .rounded(px(12.))
             .border_1()

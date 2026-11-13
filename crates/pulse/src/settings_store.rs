@@ -24,6 +24,17 @@ fn default_remote_port() -> u16 {
     pulse_remote::DEFAULT_PORT
 }
 
+/// Amazon Music: the one slug checked against lucida's own search page.
+fn default_acquire_service() -> String {
+    "amazon".to_string()
+}
+
+/// `US` is what lucida's search page was verified with. Any storefront code
+/// works; the panel lets it be changed without a rebuild.
+fn default_acquire_country() -> String {
+    "US".to_string()
+}
+
 pub const LYRICS_FONT_SIZE_MIN: f32 = 12.;
 pub const LYRICS_FONT_SIZE_MAX: f32 = 32.;
 pub const LYRICS_FONT_SIZE_DEFAULT: f32 = 16.;
@@ -519,6 +530,15 @@ pub struct UserSettings {
     pub lyrics_from_internet: bool,
     #[serde(default)]
     pub lyrics_prefer_lrclib: bool,
+    /// Which service lucida is asked to pull from. A string rather than an enum
+    /// so a service added on their side can be used by editing the file, and so
+    /// a value this build has never heard of survives a save instead of being
+    /// rewritten.
+    #[serde(default = "default_acquire_service")]
+    pub acquire_service: String,
+    /// The storefront lucida resolves against, as a country code.
+    #[serde(default = "default_acquire_country")]
+    pub acquire_country: String,
     #[serde(default)]
     pub remote_enabled: bool,
     #[serde(default = "default_remote_port")]
@@ -619,6 +639,8 @@ impl Default for UserSettings {
             artists_grouping: music_library::ArtistGrouping::default(),
             lyrics_from_internet: false,
             lyrics_prefer_lrclib: false,
+            acquire_service: default_acquire_service(),
+            acquire_country: default_acquire_country(),
             remote_enabled: false,
             remote_port: pulse_remote::DEFAULT_PORT,
             remote_token: String::new(),
@@ -1017,6 +1039,24 @@ impl SettingsStore {
 
     pub fn set_lyrics_prefer_lrclib(&mut self, enabled: bool) -> anyhow::Result<()> {
         self.settings.lyrics_prefer_lrclib = enabled;
+        self.save()
+    }
+
+    pub fn acquire_service(&self) -> String {
+        self.settings.acquire_service.clone()
+    }
+
+    pub fn set_acquire_service(&mut self, service: &str) -> anyhow::Result<()> {
+        self.settings.acquire_service = service.to_string();
+        self.save()
+    }
+
+    pub fn acquire_country(&self) -> String {
+        self.settings.acquire_country.clone()
+    }
+
+    pub fn set_acquire_country(&mut self, country: &str) -> anyhow::Result<()> {
+        self.settings.acquire_country = country.to_string();
         self.save()
     }
 
@@ -1879,6 +1919,8 @@ mod tests {
             artists_grouping: music_library::ArtistGrouping::TrackArtist,
             lyrics_from_internet: false,
             lyrics_prefer_lrclib: false,
+            acquire_service: "amazon".to_string(),
+            acquire_country: "US".to_string(),
             remote_enabled: false,
             remote_port: pulse_remote::DEFAULT_PORT,
             remote_token: String::new(),
@@ -1943,6 +1985,28 @@ mod tests {
         );
         assert!(back.playback.custom);
         assert_eq!(back.sleep_timer, settings.sleep_timer);
+    }
+
+    /// A settings file written before "Get music" existed must load with the
+    /// service and storefront already set, not with two empty strings that turn
+    /// the panel's first search into a broken URL.
+    #[test]
+    fn acquire_settings_default_when_the_file_predates_them() {
+        let settings: UserSettings = serde_json::from_str(r#"{"volume":0.5}"#).unwrap();
+        assert_eq!(settings.acquire_service, "amazon");
+        assert_eq!(settings.acquire_country, "US");
+    }
+
+    #[test]
+    fn acquire_settings_round_trip() {
+        let settings: UserSettings =
+            serde_json::from_str(r#"{"acquire_service":"qobuz","acquire_country":"GB"}"#).unwrap();
+        assert_eq!(settings.acquire_service, "qobuz");
+        assert_eq!(settings.acquire_country, "GB");
+        let json = serde_json::to_string(&settings).unwrap();
+        let back: UserSettings = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.acquire_service, "qobuz");
+        assert_eq!(back.acquire_country, "GB");
     }
 
     #[test]

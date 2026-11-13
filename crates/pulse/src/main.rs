@@ -13,6 +13,7 @@ pub mod audio_settings;
 pub mod animations;
 mod paths;
 mod portable;
+mod acquire;
 mod command_palette;
 pub mod cover_art_cache;
 pub mod cover_backdrop;
@@ -246,6 +247,7 @@ fn main() {
         gpui_component::init(cx);
         crate::playlist_popup::init(cx);
         crate::command_palette::init(cx);
+        crate::acquire::init(cx);
         crate::keyboard_shortcuts::init(cx);
         crate::error_bridge::spawn_notice_forwarder(cx, notices);
 

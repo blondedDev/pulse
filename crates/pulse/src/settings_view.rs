@@ -97,7 +97,9 @@ pub fn build_settings_pages(
 
     // Everything that reaches the network lives on this one page, and every
     // switch on it starts off. The rest of the app is fully usable without it.
-    let mut online = SettingPage::new(tr().settings_online.clone()).group(online_lyrics_group());
+    let mut online = SettingPage::new(tr().settings_online.clone())
+        .group(online_lyrics_group())
+        .group(acquire_group());
     // Shown either way. Without an application id the switches would do
     // nothing, so that build gets a card saying why instead of a card that is
     // missing with no explanation.
@@ -2658,6 +2660,44 @@ fn reset_all_settings(window: &mut Window, cx: &mut App) {
         }
         Err(err) => notify_save_error(cx, err),
     }
+}
+
+/// Getting music into the library without leaving the app.
+///
+/// The one thing this cannot do is download: lucida has no API and asks not to
+/// be scraped. What it does instead is build the page the user would have typed
+/// and open it, then let the library's own folder scan pick the files up. That
+/// is why there is a folder picker here and not a progress bar.
+fn acquire_group() -> SettingGroup {
+    SettingGroup::new()
+        .title(tr().acquire_group.clone())
+        .description(tr().acquire_desc.clone())
+        .item(SettingItem::unlabeled(SettingField::render(
+            |_window, _cx: &mut App| {
+                h_flex().items_center().justify_end().child(
+                    Button::new("acquire-open-panel")
+                        .small()
+                        .label(tr().acquire_open_panel.clone())
+                        .on_click(|_, window, cx| {
+                            window.dispatch_action(Box::new(crate::acquire::OpenAcquire), cx)
+                        }),
+                )
+            },
+        )))
+        .item(
+            SettingItem::new(
+                tr().acquire_download_folder.clone(),
+                SettingField::render(|_window, _cx: &mut App| {
+                    h_flex().items_center().justify_end().child(
+                        Button::new("acquire-add-download-folder")
+                            .small()
+                            .label(tr().acquire_add_download_folder.clone())
+                            .on_click(|_, _, cx| pick_and_add_folder(cx)),
+                    )
+                }),
+            )
+            .description(tr().acquire_download_folder_desc.clone()),
+        )
 }
 
 fn local_folders_group(sources: Entity<crate::library_sources::LibrarySources>) -> SettingGroup {

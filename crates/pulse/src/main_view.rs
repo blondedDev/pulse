@@ -20,6 +20,7 @@ use gpui_component::{
 };
 
 use crate::audio_settings::AudioSettings;
+use crate::acquire::{AcquireEvent, AcquirePanel, OpenAcquire};
 use crate::command_palette::{
     CommandPalette, CommandPaletteEvent, PaletteAction, ToggleCommandPalette,
 };
@@ -95,6 +96,8 @@ pub struct MainView {
     playlist_popup: Entity<PlaylistPopup>,
     command_palette: Entity<CommandPalette>,
     _command_palette_subscription: Subscription,
+    acquire_panel: Entity<AcquirePanel>,
+    _acquire_subscription: Subscription,
     is_drilled_in: bool,
     /// The header sort menu, only present while a folder level is on screen.
     folder_sort_open: bool,
@@ -546,6 +549,19 @@ impl MainView {
             },
         );
 
+        let acquire_panel = cx.new(|cx| AcquirePanel::new(window, cx));
+        let acquire_subscription = cx.subscribe_in(
+            &acquire_panel,
+            window,
+            |this, _, event: &AcquireEvent, window, cx| {
+                if matches!(event, AcquireEvent::Closed) {
+                    // Same reason as the palette: its input held focus, and
+                    // leaving it there kills every global shortcut.
+                    this.focus_handle.focus(window, cx);
+                }
+            },
+        );
+
         let settings_observer = cx.observe_global::<SettingsStore>({
             let lyrics_slider = lyrics_slider.clone();
             let blur_intensity_slider = blur_intensity_slider.clone();
@@ -634,6 +650,8 @@ impl MainView {
             playlist_popup,
             command_palette,
             _command_palette_subscription: command_palette_subscription,
+            acquire_panel,
+            _acquire_subscription: acquire_subscription,
             is_drilled_in: false,
             folder_sort_open: false,
             current_tab: startup_tab,
@@ -774,6 +792,11 @@ impl MainView {
     fn leave_overlays(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.clear_search(window, cx);
         self.set_cover_mode(false, cx);
+        // A tab change is a change of context; the panel belongs to the one it
+        // was opened from.
+        if self.acquire_panel.read(cx).is_open() {
+            self.acquire_panel.update(cx, |panel, cx| panel.close(cx));
+        }
     }
 
     fn set_cover_mode(&mut self, on: bool, cx: &mut Context<Self>) {
@@ -880,6 +903,16 @@ impl MainView {
         cx.notify();
     }
 
+    /// The panel and the palette are both overlays with their own focus, so
+    /// only one may be open: two stacked inputs would make Escape close the
+    /// wrong one and leave the other holding focus.
+    fn on_open_acquire(&mut self, _: &OpenAcquire, window: &mut Window, cx: &mut Context<Self>) {
+        self.command_palette.update(cx, |palette, cx| palette.close(cx));
+        self.acquire_panel
+            .update(cx, |panel, cx| panel.toggle(window, cx));
+        cx.notify();
+    }
+
     /// The palette never touches the library view or the queue itself. It reports
     /// what the user picked and this decides what that means — which keeps all
     /// the app wiring in one place instead of smeared through the overlay.
@@ -918,6 +951,9 @@ impl MainView {
                 PaletteAction::ToggleLyrics => self.set_lyrics_visible(!self.show_lyrics, cx),
                 PaletteAction::ToggleCoverMode => self.set_cover_mode(!self.cover_mode, cx),
                 PaletteAction::OpenSettings => self.open_settings(0, window, cx),
+                PaletteAction::AcquireMusic => {
+                    self.on_open_acquire(&OpenAcquire, window, cx);
+                }
             },
         }
         cx.notify();
@@ -1403,6 +1439,7 @@ impl Render for MainView {
                     .on_action(cx.listener(Self::on_exit_cover_mode))
                     .on_action(cx.listener(Self::on_open_online_settings))
                     .on_action(cx.listener(Self::on_toggle_command_palette))
+                    .on_action(cx.listener(Self::on_open_acquire))
                     .on_action(cx.listener(Self::on_play_next_hovered))
                     .when(show_chrome, |d| d.child(header_bar))
                     .child(middle)
@@ -1439,6 +1476,7 @@ impl Render for MainView {
             })
             .child(self.playlist_popup.clone())
             .child(self.command_palette.clone())
+            .child(self.acquire_panel.clone())
     }
 }
 

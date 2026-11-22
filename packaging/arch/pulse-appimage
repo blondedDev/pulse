@@ -1,0 +1,6 @@
+#!/bin/sh
+# Launch the packaged AppImage.
+#
+# This copy lives in /opt and is owned by root, so it is updated by reinstalling
+# the package (`paru -Syu pulse-appimage`), not by Pulse's own update checker.
+exec /opt/pulse/Pulse.AppImage "$@"

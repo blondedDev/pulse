@@ -1,0 +1,38 @@
+# Maintainer: Aleksandr Popov <blondedDev@users.noreply.github.com>
+#
+# Pulse, installed the way it is published: the self-contained AppImage, dropped
+# in /opt with a menu entry. `paru -Syu pulse-appimage` (or pacman) owns it, so
+# use the package manager to update; the in-app checker cannot write to /opt.
+#
+# After a new release: bump pkgver, refresh sha256sums (`updpkgsums` while in
+# this directory), then `makepkg -f`.
+pkgname=pulse-appimage
+pkgver=5.8.1
+pkgrel=1
+pkgdesc="Local-first music player, packaged as its self-contained AppImage"
+arch=('x86_64')
+url="https://github.com/blondedDev/pulse"
+license=('MIT')
+depends=('fuse2')
+# An AppImage is an ELF with a squashfs appended. `strip` would rewrite the ELF
+# and corrupt the payload, so it stays out of this one.
+options=('!strip' '!debug')
+source=(
+    "Pulse-${pkgver}-x86_64.AppImage::https://github.com/blondedDev/pulse/releases/download/v${pkgver}/Pulse-v${pkgver}-x86_64.AppImage"
+    "pulse.png::https://raw.githubusercontent.com/blondedDev/pulse/v${pkgver}/crates/ui_resources/assets/app-icon/256x256.png"
+    "pulse.desktop"
+    "pulse-appimage"
+)
+sha256sums=(
+    '3abeee93f9b7d76b5511836bb36550e5abf6b379d89698fb5108f29bfee7a32b'
+    '09dcb2c15812df6a4501667132cb75ad31a62c59e520d160a70d008b8299b9ed'
+    'SKIP'
+    'SKIP'
+)
+
+package() {
+    install -Dm755 "$srcdir/Pulse-${pkgver}-x86_64.AppImage" "$pkgdir/opt/pulse/Pulse.AppImage"
+    install -Dm644 "$srcdir/pulse.png" "$pkgdir/usr/share/icons/hicolor/256x256/apps/pulse.png"
+    install -Dm644 "$srcdir/pulse.desktop" "$pkgdir/usr/share/applications/pulse.desktop"
+    install -Dm755 "$srcdir/pulse-appimage" "$pkgdir/usr/bin/pulse-appimage"
+}

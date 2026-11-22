@@ -14,3 +14,5 @@ opencode.json
 /dist
 /pulse-*.tar.gz
 /pulse-*.tar.gz.sha256
+/Pulse-*.AppImage
+/Pulse-*.AppImage.sha256

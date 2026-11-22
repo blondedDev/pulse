@@ -16,7 +16,7 @@ One library. No account. No cloud.
   playlists or all tracks. `Ctrl+K` searches everything. Cue sheets supported.
 - **Playback** — native sample rate through PipeWire, or exclusive mode.
   ReplayGain, gapless playback, queue, shuffle, repeat and a full-screen cover
-  view.
+  view. Volume goes to 150% through a peak limiter, for quiet masters.
 - **Editing** — tag editor for a track or a whole album, cover art included.
   Lyrics from tags, `.lrc` files or LRCLIB.
 - **Rewind** — plays, hours and top artists, albums and tracks for the last 90
@@ -39,7 +39,8 @@ Nothing touches the network unless you ask. Everything online starts off:
 
 No accounts, analytics, telemetry or scrobbling. Updates are checked only when
 you press **Settings → General → Check for updates**, and the download is
-verified against the release's SHA-256 before it replaces the running binary.
+verified against the release's SHA-256 before it replaces whatever Pulse was
+started from — a bare binary or the AppImage itself.
 
 **Get music** is a handoff, not a downloader. Pulse builds the lucida.to page
 for your search and opens it in your browser; it never contacts lucida itself,
@@ -55,6 +56,17 @@ From [Releases](../../releases):
 tar -xzf pulse-*-x86_64-linux.tar.gz
 install -m 755 pulse ~/.local/bin/pulse
 ```
+
+Or as an AppImage, which carries its own desktop file and icon:
+
+```sh
+chmod +x Pulse-*-x86_64.AppImage
+./Pulse-*-x86_64.AppImage
+```
+
+Put it anywhere your user owns — the in-app updater replaces that file. It
+needs the host's Vulkan driver and `libwayland-client`; those are deliberately
+not bundled, because they have to match the GPU.
 
 From source:
 

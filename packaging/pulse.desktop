@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Pulse
+GenericName=Music Player
+Comment=Local-first music player
+Exec=pulse %U
+Icon=pulse
+Terminal=false
+Categories=AudioVideo;Audio;Player;
+Keywords=music;audio;player;library;offline;

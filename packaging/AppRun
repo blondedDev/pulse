@@ -1,0 +1,19 @@
+#!/bin/sh
+# AppImage entry point. The runtime exports APPDIR; fall back to our own path so
+# the AppDir also works when extracted by hand.
+set -eu
+
+if [ -n "${APPDIR:-}" ]; then
+    here="$APPDIR"
+else
+    here="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+fi
+
+# Anything linuxdeploy bundled lives in usr/lib. The system's graphics drivers
+# are deliberately not bundled, so Vulkan/EGL still come from the host.
+if [ -d "$here/usr/lib" ]; then
+    LD_LIBRARY_PATH="$here/usr/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+    export LD_LIBRARY_PATH
+fi
+
+exec "$here/usr/bin/pulse" "$@"

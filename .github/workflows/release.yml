@@ -30,7 +30,7 @@ jobs:
           # ten minutes in.
           pacman -Syu --noconfirm --needed \
             base-devel rust cargo git nodejs npm \
-            pipewire alsa-lib clang cmake pkgconf \
+            pipewire alsa-lib clang cmake pkgconf curl \
             fontconfig freetype2 \
             libxkbcommon libxkbcommon-x11 libxcb libx11 wayland \
             vulkan-icd-loader
@@ -82,6 +82,15 @@ jobs:
           ARCHIVE="pulse-${GITHUB_REF_NAME}-x86_64-linux.tar.gz"
           sha256sum "$ARCHIVE" > "$ARCHIVE.sha256"
 
+      # A single-file build for people who would rather not unpack anything.
+      # The in-app updater replaces the AppImage it was started from, so this
+      # asset is not just a convenience: it is the update path for those users.
+      - name: Build the AppImage
+        run: |
+          packaging/build-appimage.sh "${GITHUB_REF_NAME}"
+          APPIMAGE="Pulse-${GITHUB_REF_NAME}-x86_64.AppImage"
+          sha256sum "$APPIMAGE" > "$APPIMAGE.sha256"
+
       - name: Attach to release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
@@ -89,6 +98,8 @@ jobs:
           files: |
             pulse-*.tar.gz
             pulse-*.tar.gz.sha256
+            Pulse-*.AppImage
+            Pulse-*.AppImage.sha256
           generate_release_notes: true
           body: |
             Prebuilt for **x86_64 Linux**.
@@ -98,5 +109,14 @@ jobs:
             install -m 755 pulse ~/.local/bin/pulse
             ```
 
+            Or the AppImage, which carries its own desktop entry and icon:
+
+            ```sh
+            chmod +x Pulse-${{ github.ref_name }}-x86_64.AppImage
+            ./Pulse-${{ github.ref_name }}-x86_64.AppImage
+            ```
+
             Requires PipeWire with `pipewire-alsa`, plus `alsa-lib`,
-            `libxkbcommon` and `libxcb` at runtime.
+            `libxkbcommon` and `libxcb` at runtime. The AppImage also needs the
+            host's Vulkan driver and `libwayland-client`, which are not bundled
+            because they have to match the GPU.

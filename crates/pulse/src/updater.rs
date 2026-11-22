@@ -2,15 +2,25 @@
 //!
 //! The check is **manual by design**: Pulse is offline-first, and nothing here
 //! touches the network until the user presses Check for updates. Once a newer
-//! tag exists, the release tarball is downloaded, checked against the release's
-//! own `.sha256` asset, unpacked, and renamed over the running binary. Linux
-//! keeps the old inode alive for the current process, so the swap is safe while
-//! the app is still painting; then the new binary is spawned and the old one
-//! quits.
+//! tag exists, the matching asset is downloaded and checked against the
+//! release's own `.sha256`, then put in place.
 //!
-//! The target is `std::env::current_exe()`, not a guessed install path. Pulse
-//! ships as a bare binary in `~/.local/bin`, `~/Applications`, or a distro
-//! package, and only the process knows which one it was started from.
+//! There are two shapes to replace:
+//!
+//! - a bare binary from the release tarball, renamed over the running
+//!   executable;
+//! - an AppImage, where the running executable is inside a read-only mount.
+//!   The AppImage runtime exports `APPIMAGE`, the path of the file the user
+//!   actually launched, and that file is what gets replaced.
+//!
+//! Linux keeps the old inode alive for the current process, so the swap is safe
+//! while the app is still painting; then the new binary is spawned and the old
+//! one quits.
+//!
+//! Outside an AppImage the target is `std::env::current_exe()`, not a guessed
+//! install path. Pulse ships as a bare binary in `~/.local/bin`,
+//! `~/Applications`, or a distro package, and only the process knows which one
+//! it was started from.
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -163,7 +173,7 @@ impl Updater {
 }
 
 fn restart(cx: &mut App) -> bool {
-    let Ok(exe) = std::env::current_exe() else {
+    let Ok(exe) = restarted_exe() else {
         return false;
     };
     let args: Vec<_> = std::env::args_os().skip(1).collect();
@@ -175,11 +185,40 @@ fn restart(cx: &mut App) -> bool {
     }
 }
 
+/// The file to start after an update: the AppImage when there is one, the
+/// executable otherwise.
+fn restarted_exe() -> Result<PathBuf, std::io::Error> {
+    match running_appimage() {
+        Some(appimage) => Ok(appimage),
+        None => std::env::current_exe(),
+    }
+}
+
+/// The AppImage this process was started from, if any.
+///
+/// The AppImage runtime sets `APPIMAGE` to the file the user launched. Inside
+/// the mounted image `current_exe()` points at the read-only extract, which is
+/// why the updater cannot simply rename over it.
+fn running_appimage() -> Option<PathBuf> {
+    std::env::var_os("APPIMAGE")
+        .filter(|path| !path.is_empty())
+        .map(PathBuf::from)
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct Asset {
+    url: String,
+    checksum_url: String,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct Release {
     version: String,
-    archive_url: String,
-    checksum_url: String,
+    /// The tarball with the bare binary. Always present.
+    archive: Asset,
+    /// Published alongside the tarball; optional so an older release still
+    /// updates a bare binary, but required when *this* copy is an AppImage.
+    appimage: Option<Asset>,
 }
 
 #[derive(Deserialize)]
@@ -234,30 +273,68 @@ fn fetch_latest() -> Result<Release, String> {
 }
 
 fn release_from_json(json: ReleaseJson) -> Result<Release, String> {
-    let archive = json
+    let archive = pick_asset(
+        &json,
+        "-x86_64-linux.tar.gz",
+        "The latest release has no Linux archive.",
+    )?;
+    // Missing is not an error: a bare install still has the tarball to use.
+    let appimage = pick_asset(
+        &json,
+        "-x86_64.AppImage",
+        "The latest release has no AppImage.",
+    )
+    .ok();
+
+    Ok(Release {
+        version: json.tag_name,
+        archive,
+        appimage,
+    })
+}
+
+/// Finds an asset by suffix, with its `.sha256` beside it.
+fn pick_asset(json: &ReleaseJson, suffix: &str, missing: &str) -> Result<Asset, String> {
+    let asset = json
         .assets
         .iter()
-        .find(|asset| asset.name.ends_with("-x86_64-linux.tar.gz"))
-        .ok_or_else(|| "The latest release has no Linux archive.".to_string())?;
-    let checksum_name = format!("{}.sha256", archive.name);
+        .find(|asset| asset.name.ends_with(suffix))
+        .ok_or_else(|| missing.to_string())?;
+    let checksum_name = format!("{}.sha256", asset.name);
     let checksum = json
         .assets
         .iter()
         .find(|asset| asset.name == checksum_name)
         .ok_or_else(|| "The latest release has no checksum file.".to_string())?;
 
-    Ok(Release {
-        version: json.tag_name,
-        archive_url: archive.browser_download_url.clone(),
+    Ok(Asset {
+        url: asset.browser_download_url.clone(),
         checksum_url: checksum.browser_download_url.clone(),
     })
 }
 
 /// Download, verify and install. Runs off the UI thread.
 fn download_and_install(release: &Release) -> Result<(), String> {
+    // An AppImage has to be replaced as a file; anything else installs the
+    // bare binary out of the tarball. Picking the asset first means a release
+    // that forgot to attach the AppImage fails before downloading 30 MB.
+    let (asset, target, appimage) = match running_appimage() {
+        Some(appimage) => {
+            let asset = release.appimage.clone().ok_or_else(|| {
+                "The latest release has no AppImage to update this copy with.".to_string()
+            })?;
+            (asset, appimage, true)
+        }
+        None => {
+            let target = std::env::current_exe()
+                .map_err(|error| format!("Could not find the running Pulse binary: {error}"))?;
+            (release.archive.clone(), target, false)
+        }
+    };
+
     let agent = agent();
     let mut checksum = agent
-        .get(&release.checksum_url)
+        .get(&asset.checksum_url)
         .call()
         .map_err(|error| format!("Could not download the checksum: {error}"))?;
     let checksum_text = checksum
@@ -269,20 +346,22 @@ fn download_and_install(release: &Release) -> Result<(), String> {
     let expected = expected_sha(&checksum_text)
         .ok_or_else(|| "The release checksum was not a SHA-256 hash.".to_string())?;
 
-    let mut archive = agent
-        .get(&release.archive_url)
+    let mut download = agent
+        .get(&asset.url)
         .call()
         .map_err(|error| format!("Could not download the update: {error}"))?;
-    let bytes = archive
+    let bytes = download
         .body_mut()
         .with_config()
         .limit(MAX_ARCHIVE_BYTES)
         .read_to_vec()
         .map_err(|error| format!("Could not read the update: {error}"))?;
 
-    let target = std::env::current_exe()
-        .map_err(|error| format!("Could not find the running Pulse binary: {error}"))?;
-    install_bytes(&bytes, &expected, &target)
+    if appimage {
+        install_appimage(&bytes, &expected, &target)
+    } else {
+        install_bytes(&bytes, &expected, &target)
+    }
 }
 
 /// Verify `bytes`, take the `pulse` entry out of the tarball, and rename it
@@ -292,10 +371,7 @@ fn download_and_install(release: &Release) -> Result<(), String> {
 /// within one filesystem, and the target's directory is the one a user is
 /// expected to own.
 fn install_bytes(bytes: &[u8], expected_sha: &str, target: &Path) -> Result<(), String> {
-    let actual = hex_digest(&Sha256::digest(bytes));
-    if actual != expected_sha.to_ascii_lowercase() {
-        return Err("The update was corrupted (checksum mismatch). Nothing was changed.".to_string());
-    }
+    verify_download(bytes, expected_sha)?;
 
     let decoder = flate2::read::GzDecoder::new(bytes);
     let mut archive = tar::Archive::new(decoder);
@@ -347,6 +423,43 @@ fn staged_path(target: &Path) -> PathBuf {
     let mut name = target.file_name().unwrap_or_default().to_os_string();
     name.push(".new");
     target.with_file_name(name)
+}
+
+/// Verify a downloaded asset against the release's `.sha256`.
+fn verify_download(bytes: &[u8], expected_sha: &str) -> Result<(), String> {
+    let actual = hex_digest(&Sha256::digest(bytes));
+    if actual != expected_sha.to_ascii_lowercase() {
+        return Err(
+            "The update was corrupted (checksum mismatch). Nothing was changed.".to_string(),
+        );
+    }
+    Ok(())
+}
+
+/// Replace the AppImage the user launched with the downloaded one.
+///
+/// The image is written beside it first: the mount the process is running from
+/// stays valid, and the rename is atomic on the same filesystem. The file has
+/// to be executable before the swap, or the next launch is a permission error.
+fn install_appimage(bytes: &[u8], expected_sha: &str, target: &Path) -> Result<(), String> {
+    verify_download(bytes, expected_sha)?;
+
+    let staged = staged_path(target);
+    std::fs::write(&staged, bytes).map_err(|error| {
+        let _ = std::fs::remove_file(&staged);
+        format!(
+            "Could not write next to {}: {error}. Move the AppImage to a folder your user can write to.",
+            target.display()
+        )
+    })?;
+    if let Err(error) = set_executable(&staged) {
+        let _ = std::fs::remove_file(&staged);
+        return Err(error);
+    }
+    std::fs::rename(&staged, target).map_err(|error| {
+        let _ = std::fs::remove_file(&staged);
+        format!("Could not replace {}: {error}", target.display())
+    })
 }
 
 fn set_executable(path: &Path) -> Result<(), String> {
@@ -443,8 +556,53 @@ mod tests {
         .unwrap();
         let release = release_from_json(json).unwrap();
         assert_eq!(release.version, "v5.7.0");
-        assert_eq!(release.archive_url, "https://example.test/tar");
-        assert_eq!(release.checksum_url, "https://example.test/sha");
+        assert_eq!(release.archive.url, "https://example.test/tar");
+        assert_eq!(release.archive.checksum_url, "https://example.test/sha");
+        assert!(release.appimage.is_none());
+    }
+
+    #[test]
+    fn the_appimage_and_its_checksum_are_picked_when_present() {
+        let json: ReleaseJson = serde_json::from_str(
+            r#"{
+                "tag_name": "v5.8.1",
+                "assets": [
+                    {"name": "Pulse-v5.8.1-x86_64.AppImage.sha256",
+                     "browser_download_url": "https://example.test/appimage-sha"},
+                    {"name": "pulse-v5.8.1-x86_64-linux.tar.gz.sha256",
+                     "browser_download_url": "https://example.test/tar-sha"},
+                    {"name": "Pulse-v5.8.1-x86_64.AppImage",
+                     "browser_download_url": "https://example.test/appimage"},
+                    {"name": "pulse-v5.8.1-x86_64-linux.tar.gz",
+                     "browser_download_url": "https://example.test/tar"}
+                ]
+            }"#,
+        )
+        .unwrap();
+        let release = release_from_json(json).unwrap();
+        let appimage = release.appimage.expect("the AppImage asset is found");
+        assert_eq!(appimage.url, "https://example.test/appimage");
+        assert_eq!(appimage.checksum_url, "https://example.test/appimage-sha");
+        assert_eq!(release.archive.url, "https://example.test/tar");
+    }
+
+    #[test]
+    fn an_appimage_without_a_checksum_is_not_offered() {
+        let json: ReleaseJson = serde_json::from_str(
+            r#"{
+                "tag_name": "v5.8.1",
+                "assets": [
+                    {"name": "Pulse-v5.8.1-x86_64.AppImage",
+                     "browser_download_url": "https://example.test/appimage"},
+                    {"name": "pulse-v5.8.1-x86_64-linux.tar.gz.sha256",
+                     "browser_download_url": "https://example.test/tar-sha"},
+                    {"name": "pulse-v5.8.1-x86_64-linux.tar.gz",
+                     "browser_download_url": "https://example.test/tar"}
+                ]
+            }"#,
+        )
+        .unwrap();
+        assert!(release_from_json(json).unwrap().appimage.is_none());
     }
 
     /// Opt-in network check, because it is the only way to catch GitHub changing
@@ -454,11 +612,19 @@ mod tests {
     fn the_live_release_is_parsable() {
         let release = fetch_latest().unwrap();
         assert!(
-            release.archive_url.ends_with("-x86_64-linux.tar.gz"),
+            release.archive.url.ends_with("-x86_64-linux.tar.gz"),
             "{}",
-            release.archive_url
+            release.archive.url
         );
-        assert!(release.checksum_url.ends_with(".sha256"));
+        assert!(release.archive.checksum_url.ends_with(".sha256"));
+        if let Some(appimage) = release.appimage {
+            assert!(
+                appimage.url.ends_with("-x86_64.AppImage"),
+                "{}",
+                appimage.url
+            );
+            assert!(appimage.checksum_url.ends_with(".sha256"));
+        }
     }
 
     /// Build a release-shaped archive in memory: a `pulse` file plus a licence.
@@ -504,6 +670,37 @@ mod tests {
         assert!(!dir.join("pulse.new").exists(), "the staged file is gone");
         let mode = std::fs::metadata(&target).unwrap().permissions().mode() & 0o777;
         assert_eq!(mode, 0o755);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_verified_appimage_replaces_the_file() {
+        let dir = staged_dir("appimage");
+        let target = dir.join("Pulse-x86_64.AppImage");
+        std::fs::write(&target, b"old image").unwrap();
+        let bytes = b"new image bytes";
+        let sha = hex_digest(&Sha256::digest(bytes));
+
+        install_appimage(bytes, &sha, &target).unwrap();
+        assert_eq!(std::fs::read(&target).unwrap(), b"new image bytes");
+        assert!(!dir.join("Pulse-x86_64.AppImage.new").exists());
+        let mode = std::fs::metadata(&target).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o755);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_corrupt_appimage_changes_nothing() {
+        let dir = staged_dir("appimage-badsha");
+        let target = dir.join("Pulse-x86_64.AppImage");
+        std::fs::write(&target, b"old image").unwrap();
+
+        let error = install_appimage(b"new image bytes", &"0".repeat(64), &target).unwrap_err();
+        assert!(error.contains("corrupted"));
+        assert_eq!(std::fs::read(&target).unwrap(), b"old image");
+        assert!(!dir.join("Pulse-x86_64.AppImage.new").exists());
 
         let _ = std::fs::remove_dir_all(&dir);
     }

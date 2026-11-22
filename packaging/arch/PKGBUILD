@@ -1,14 +1,16 @@
 # Maintainer: Aleksandr Popov <blondedDev@users.noreply.github.com>
 #
 # Pulse, installed the way it is published: the self-contained AppImage, dropped
-# in /opt with a menu entry. `paru -Syu pulse-appimage` (or pacman) owns it, so
-# use the package manager to update; the in-app checker cannot write to /opt.
+# in /opt with a menu entry. The launcher copies the seed to the user's data
+# directory on first run, so Pulse's own updater can replace that copy; a package
+# upgrade refreshes it. `paru -Syu pulse-appimage` and the in-app checker are
+# both valid update paths.
 #
 # After a new release: bump pkgver, refresh sha256sums (`updpkgsums` while in
 # this directory), then `makepkg -f`.
 pkgname=pulse-appimage
 pkgver=5.8.1
-pkgrel=1
+pkgrel=2
 pkgdesc="Local-first music player, packaged as its self-contained AppImage"
 arch=('x86_64')
 url="https://github.com/blondedDev/pulse"

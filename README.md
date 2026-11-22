@@ -69,9 +69,9 @@ needs the host's Vulkan driver and `libwayland-client`; those are deliberately
 not bundled, because they have to match the GPU.
 
 On Arch/CachyOS, `packaging/arch/PKGBUILD` wraps the same AppImage in a pacman
-package, so the menu entry and `/opt/pulse/Pulse.AppImage` are owned by the
-package manager; update that copy with `paru -Syu pulse-appimage` instead of the
-in-app checker.
+package. It seeds `/opt/pulse/Pulse.AppImage` and runs a user-owned copy from
+`~/.local/share/pulse-appimage/`, so the in-app updater still works; a package
+upgrade refreshes that copy.
 
 From source:
 

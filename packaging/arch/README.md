@@ -1,38 +1,38 @@
 # Pulse as a package
 
-`PKGBUILD` here wraps the published AppImage in a pacman package: the file goes
-to `/opt/pulse/Pulse.AppImage`, and the package owns a `pulse-appimage` launcher,
-a desktop entry and the icon.
-
-## Two update paths, one file each
-
-The copy in `/opt` is a **seed**. It is root-owned and never modified after
-install, so pacman's file record stays accurate. On first launch the launcher
-copies the seed to
+`PKGBUILD` here installs Pulse the way it is published: the AppImage goes into
+the user's own folder,
 
 ```
-${XDG_DATA_HOME:-~/.local/share}/pulse-appimage/Pulse.AppImage
+~/Applications/AppImages/Pulse.AppImage
 ```
 
-and runs that copy. The AppImage exports its path as `APPIMAGE`, so Pulse's own
-updater finds the writable file and replaces it in place. That is the normal way
-to update.
+and the package owns the `pulse` launcher, the desktop entry and the icon. The
+AppImage is chowned to uid/gid 1000 (this is a personal package for machines
+with the same user), which is what lets Pulse's own updater replace it in place.
 
-`paru -Syu pulse-appimage` (or reinstalling a package) replaces the seed; its
-size/mtime id changes, and the launcher refreshes the user copy on the next
-launch. Both paths converge on the same running file, and neither one leaves the
-package database describing a file that is no longer there.
+## Updates
 
-If the data directory cannot be written, the launcher runs the seed directly —
-Pulse still starts, and only the in-app update is refused.
+Both paths write the same file:
 
-## Install / update the package
+- **In-app**: the runtime exports `APPIMAGE` as the path of that file, and the
+  updater renames the verified download over it.
+- **Package**: `paru -Syu pulse-appimage` installs a newer AppImage. Because the
+  path is listed in `backup`, pacman will not clobber a copy the app already
+  updated; if the packaged file is newer it leaves a `.pacnew` beside it.
+
+Reinstalling the package is therefore safe after a self-update.
+
+## Install / rebuild
 
 ```sh
 makepkg -f
 paru -U pulse-appimage-<version>-<rel>-x86_64.pkg.tar.zst   # or pacman -U
 ```
 
-For a new release: change `pkgver`, run `updpkgsums` in this directory to refresh
-the AppImage and icon hashes, then rebuild. Bump `pkgrel` when only the packaging
-changes (like the launcher script).
+If `Pulse.AppImage` was put in place by hand before installing, pacman refuses
+to overwrite an unowned file; add
+`--overwrite '/home/blonded/Applications/AppImages/Pulse.AppImage'`.
+
+For a new release: change `pkgver`, run `updpkgsums` here to refresh the AppImage
+and icon hashes, then rebuild. Bump `pkgrel` when only the packaging changes.

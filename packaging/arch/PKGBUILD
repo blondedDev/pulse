@@ -1,16 +1,19 @@
 # Maintainer: Aleksandr Popov <blondedDev@users.noreply.github.com>
 #
-# Pulse, installed the way it is published: the self-contained AppImage, dropped
-# in /opt with a menu entry. The launcher copies the seed to the user's data
-# directory on first run, so Pulse's own updater can replace that copy; a package
-# upgrade refreshes it. `paru -Syu pulse-appimage` and the in-app checker are
-# both valid update paths.
+# Pulse, installed the way it is published: the self-contained AppImage, placed
+# in the user's own AppImages folder where they keep every other one. The
+# launcher and menu entry are package-owned; the AppImage is user-owned, so
+# Pulse's updater replaces it in place.
+#
+# It is listed in `backup` on purpose: an upgrade must not clobber an AppImage
+# the app has already updated. pacman leaves a `.pacnew` if the packaged version
+# is newer.
 #
 # After a new release: bump pkgver, refresh sha256sums (`updpkgsums` while in
 # this directory), then `makepkg -f`.
 pkgname=pulse-appimage
 pkgver=5.8.1
-pkgrel=2
+pkgrel=3
 pkgdesc="Local-first music player, packaged as its self-contained AppImage"
 arch=('x86_64')
 url="https://github.com/blondedDev/pulse"
@@ -23,7 +26,7 @@ source=(
     "Pulse-${pkgver}-x86_64.AppImage::https://github.com/blondedDev/pulse/releases/download/v${pkgver}/Pulse-v${pkgver}-x86_64.AppImage"
     "pulse.png::https://raw.githubusercontent.com/blondedDev/pulse/v${pkgver}/crates/ui_resources/assets/app-icon/256x256.png"
     "pulse.desktop"
-    "pulse-appimage"
+    "pulse"
 )
 sha256sums=(
     '3abeee93f9b7d76b5511836bb36550e5abf6b379d89698fb5108f29bfee7a32b'
@@ -31,10 +34,18 @@ sha256sums=(
     'SKIP'
     'SKIP'
 )
+backup=('home/blonded/Applications/AppImages/Pulse.AppImage')
 
 package() {
-    install -Dm755 "$srcdir/Pulse-${pkgver}-x86_64.AppImage" "$pkgdir/opt/pulse/Pulse.AppImage"
-    install -Dm644 "$srcdir/pulse.png" "$pkgdir/usr/share/icons/hicolor/256x256/apps/pulse.png"
+    # The AppImage goes in the user's folder, not /opt: that is where their
+    # other AppImages live, and it is writable by them, which is what lets the
+    # in-app updater replace it.
+    install -Dm755 "$srcdir/Pulse-${pkgver}-x86_64.AppImage" \
+        "$pkgdir/home/blonded/Applications/AppImages/Pulse.AppImage"
+    chown -R 1000:1000 "$pkgdir/home/blonded"
+
+    install -Dm755 "$srcdir/pulse" "$pkgdir/usr/bin/pulse"
+    ln -s pulse "$pkgdir/usr/bin/pulse-appimage"
     install -Dm644 "$srcdir/pulse.desktop" "$pkgdir/usr/share/applications/pulse.desktop"
-    install -Dm755 "$srcdir/pulse-appimage" "$pkgdir/usr/bin/pulse-appimage"
+    install -Dm644 "$srcdir/pulse.png" "$pkgdir/usr/share/icons/hicolor/256x256/apps/pulse.png"
 }

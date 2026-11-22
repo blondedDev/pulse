@@ -68,10 +68,10 @@ Put it anywhere your user owns — the in-app updater replaces that file. It
 needs the host's Vulkan driver and `libwayland-client`; those are deliberately
 not bundled, because they have to match the GPU.
 
-On Arch/CachyOS, `packaging/arch/PKGBUILD` wraps the same AppImage in a pacman
-package. It seeds `/opt/pulse/Pulse.AppImage` and runs a user-owned copy from
-`~/.local/share/pulse-appimage/`, so the in-app updater still works; a package
-upgrade refreshes that copy.
+On Arch/CachyOS, `packaging/arch/PKGBUILD` installs that AppImage into
+`~/Applications/AppImages/Pulse.AppImage` and adds the launcher and menu entry.
+The file stays user-owned, so the in-app updater keeps working; the package
+lists it as a backup file so an upgrade will not clobber a newer copy.
 
 From source:
 

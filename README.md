@@ -93,6 +93,7 @@ screen icon. Off by default, with an optional access token.
 | `↑` `↓` | volume |
 | `Q` | queue the hovered track to play next |
 | `Esc` | leave the cover view |
+| `F` | show / hide the cover view |
 
 ## Where things live
 

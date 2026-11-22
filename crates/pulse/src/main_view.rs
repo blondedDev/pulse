@@ -31,7 +31,7 @@ use crate::cover_volume::CoverVolume;
 use crate::footer::{Footer, ToggleLyricsEvent, ToggleQueueEvent};
 use crate::keyboard_shortcuts::{
     ExitCoverMode, NextTrack, PlayNextHovered, PlayPause, PreviousTrack, SeekBackward, SeekForward,
-    VolumeDown, VolumeUp,
+    ToggleCoverMode, VolumeDown, VolumeUp,
 };
 use crate::library_service::LibraryEvent;
 use crate::library_views::library_view::{LibraryRootTab, LibraryView, LibraryViewEvent};
@@ -994,6 +994,27 @@ impl MainView {
             cx.propagate();
         }
     }
+
+    /// `F` shows cover view, `F` again puts it away.
+    ///
+    /// Cover view only replaces what is drawn in the middle; the tab, the
+    /// drilled-in level and the search stay alive underneath, so turning it off
+    /// lands on the screen it was opened from rather than resetting to a root.
+    fn on_toggle_cover_mode(
+        &mut self,
+        _: &ToggleCoverMode,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.cover_mode {
+            self.set_cover_mode(false, cx);
+            return;
+        }
+        // The search field is not rendered in cover view; if it held focus the
+        // key handler would be left with nothing to dispatch to.
+        self.focus_handle.focus(window, cx);
+        self.set_cover_mode(true, cx);
+    }
 }
 
 impl Render for MainView {
@@ -1437,6 +1458,7 @@ impl Render for MainView {
                     .on_action(cx.listener(Self::on_volume_down))
                     .on_action(cx.listener(Self::on_play_pause))
                     .on_action(cx.listener(Self::on_exit_cover_mode))
+                    .on_action(cx.listener(Self::on_toggle_cover_mode))
                     .on_action(cx.listener(Self::on_open_online_settings))
                     .on_action(cx.listener(Self::on_toggle_command_palette))
                     .on_action(cx.listener(Self::on_open_acquire))

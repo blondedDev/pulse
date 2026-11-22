@@ -6,6 +6,11 @@
 
   let open = $state(false);
 
+  /// The desktop player allows up to 150%: above unity it adds gain through a
+  /// limiter. The slider covers that whole range, so the fill is a fraction of
+  /// the maximum rather than of 100%.
+  const MAX_VOLUME = 1.5;
+
   function onInput(e: Event) {
     const value = Number((e.currentTarget as HTMLInputElement).value);
     remote.previewVolume(value / 100);
@@ -56,10 +61,12 @@
           type="range"
           class="seek w-28 flex-shrink-0 -rotate-90"
           min="0"
-          max="100"
+          max={MAX_VOLUME * 100}
           step="1"
           value={remote.volume * 100}
-          style={`--p:${remote.volume * 100}%`}
+          style={`--p:${(remote.volume / MAX_VOLUME) * 100}%`}
+          title={`Volume ${Math.round(remote.volume * 100)}%`}
+          aria-valuetext={`${Math.round(remote.volume * 100)}%`}
           disabled={remote.volumeLocked}
           oninput={onInput}
           onchange={onEnd}

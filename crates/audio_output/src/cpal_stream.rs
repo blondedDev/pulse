@@ -27,6 +27,14 @@ impl Default for OutputConfig {
     }
 }
 
+/// The loudest a volume slider may be pushed to, as a multiple of unity gain.
+///
+/// 1.0 is the file's own level. Above it the player is deliberately adding
+/// gain, so the shared path runs a peak limiter (see [`LimiterState`]) to keep
+/// the extra level from turning into hard clipping at the device. 1.5 is about
+/// +3.5 dB — enough for a quiet master without the limiter working constantly.
+pub const MAX_VOLUME: f32 = 1.5;
+
 pub trait AudioOutput: Send + Sync {
     fn write(&self, samples: &AudioBatch) -> usize;
     fn clear(&self);
@@ -69,6 +77,7 @@ pub struct CpalOutputStream {
     fade: Arc<FadeState>,
     silenced: Arc<AtomicBool>,
     device_lost: Arc<AtomicBool>,
+    limiter: Arc<LimiterState>,
     pub config: OutputConfig,
 }
 
@@ -139,6 +148,78 @@ impl FadeState {
     }
 }
 
+/// A zero-lookahead peak limiter for the volume above unity.
+///
+/// Below 100% nothing here runs and the signal path is unchanged. Above it the
+/// post-volume samples are scanned a frame at a time; any frame hotter than
+/// full scale pulls the gain down immediately, and it eases back toward unity
+/// over [`LIMITER_RELEASE_SECS`]. Instant attack means the very frame that
+/// overloaded the output is scaled down before it reaches the device, so the
+/// result is quieter rather than clipped. With no lookahead the gain jump can
+/// round the corner of a transient (audible as compression, not as the crackle
+/// of clipping); that is the trade for a limiter that costs one pass and no
+/// delay.
+pub(crate) struct LimiterState {
+    gain: AtomicF32,
+    /// Per-frame release coefficient, derived from the stream's sample rate.
+    release: f32,
+}
+
+/// How long the limiter takes to climb back toward unity once the signal gets
+/// quiet again. Short enough not to pump, long enough not to distort a kick
+/// drum's decay.
+const LIMITER_RELEASE_SECS: f32 = 0.15;
+
+impl LimiterState {
+    pub(crate) fn new(sample_rate: u32) -> Self {
+        let release = 1.0 - (-1.0 / (LIMITER_RELEASE_SECS * sample_rate as f32)).exp();
+        Self {
+            gain: AtomicF32::new(1.0),
+            release,
+        }
+    }
+
+    /// Back to unity, for when the volume drops to 100% or below again.
+    pub(crate) fn reset(&self) {
+        self.gain.store(1.0, Ordering::SeqCst);
+    }
+}
+
+/// Scales `buf` down frame by frame so no sample leaves above full scale.
+///
+/// Interleaved frames share one gain so the stereo image does not shift; a
+/// quiet buffer leaves the envelope where it is and recovers gradually.
+pub(crate) fn apply_limiter(buf: &mut [f32], channels: usize, limiter: &LimiterState) {
+    let mut gain = limiter.gain.load(Ordering::Relaxed);
+    let channels = channels.max(1);
+    for frame in buf.chunks_mut(channels) {
+        let peak = frame
+            .iter()
+            .fold(0.0f32, |max, sample| max.max(sample.abs()));
+        let target = if peak > 1.0 { 1.0 / peak } else { 1.0 };
+        if target < gain {
+            gain = target;
+        } else {
+            gain += (target - gain) * limiter.release;
+            if gain > 1.0 {
+                gain = 1.0;
+            }
+        }
+        for sample in frame.iter_mut() {
+            *sample *= gain;
+        }
+    }
+    limiter.gain.store(gain, Ordering::Relaxed);
+}
+
+/// The three multipliers a callback applies, kept together so the render
+/// function stays a readable list of steps.
+struct Gains<'a> {
+    volume: &'a AtomicF32,
+    track_gain: &'a AtomicF32,
+    limiter: &'a LimiterState,
+}
+
 /// Applies `base_volume` and any active fade ramp to an interleaved buffer,
 /// stepping the fade gain once per frame and signalling completion.
 pub(crate) fn apply_fade_gain(
@@ -153,8 +234,9 @@ pub(crate) fn apply_fade_gain(
     if step == 0.0 {
         // Steady gain: skip the multiply near unity so bit-perfect output is
         // preserved (matches the tolerance the bit-perfect indicator uses).
+        // Above unity must still be applied — that is the volume boost.
         let m = base_volume * gain;
-        if m >= 1.0 - crate::bit_perfect::UNITY_VOLUME_TOLERANCE {
+        if (m - 1.0).abs() <= crate::bit_perfect::UNITY_VOLUME_TOLERANCE {
             return;
         }
         for s in buf.iter_mut() {
@@ -191,8 +273,7 @@ fn fill_f32(
     fade: &FadeState,
     silenced: &AtomicBool,
     buffer: &AudioRingBuffer,
-    volume: &AtomicF32,
-    track_gain: &AtomicF32,
+    gains: Gains<'_>,
     channels: usize,
     data: &mut [f32],
 ) {
@@ -208,8 +289,16 @@ fn fill_f32(
     let samples_read = buffer.pop_slice(data);
     // One multiply for both gains: `apply_fade_gain` keeps its unity fast path,
     // so ReplayGain off + volume at 100% is still bit-identical.
-    let vol = volume.load(Ordering::Relaxed) * track_gain.load(Ordering::Relaxed);
+    let user_volume = gains.volume.load(Ordering::Relaxed);
+    let vol = user_volume * gains.track_gain.load(Ordering::Relaxed);
     apply_fade_gain(fade, vol, channels, &mut data[..samples_read]);
+    // Above 100% the extra gain can push samples past full scale. The limiter
+    // only exists for that case: at or below unity the samples are untouched,
+    // so the bit-perfect path stays bit-perfect and ReplayGain keeps its own
+    // (peak-aware) behaviour.
+    if user_volume > 1.0 {
+        apply_limiter(&mut data[..samples_read], channels, gains.limiter);
+    }
     for sample in &mut data[samples_read..] {
         *sample = 0.0;
     }
@@ -244,6 +333,7 @@ struct RenderState {
     /// user turning the volume down never overwrites it, and so the user's
     /// level survives a track change.
     track_gain: Arc<AtomicF32>,
+    limiter: Arc<LimiterState>,
 }
 
 impl RenderState {
@@ -252,8 +342,11 @@ impl RenderState {
             &self.fade,
             &self.silenced,
             &self.buffer,
-            &self.volume,
-            &self.track_gain,
+            Gains {
+                volume: &self.volume,
+                track_gain: &self.track_gain,
+                limiter: &self.limiter,
+            },
             channels,
             data,
         );
@@ -328,12 +421,14 @@ impl CpalOutputStream {
         let track_gain = Arc::new(AtomicF32::new(1.0));
         let fade = Arc::new(FadeState::new());
         let silenced = Arc::new(AtomicBool::new(true));
+        let limiter = Arc::new(LimiterState::new(output_config.sample_rate));
         let render = RenderState {
             buffer: buffer.clone(),
             volume: volume.clone(),
             track_gain: track_gain.clone(),
             fade: fade.clone(),
             silenced: silenced.clone(),
+            limiter: limiter.clone(),
         };
         let device_lost = Arc::new(AtomicBool::new(false));
         let channels = output_config.channels as usize;
@@ -426,6 +521,7 @@ impl CpalOutputStream {
             fade,
             silenced,
             device_lost,
+            limiter,
         })
     }
 
@@ -508,12 +604,17 @@ impl AudioOutput for CpalOutputStream {
     }
 
     fn set_volume(&self, value: f32) {
-        if !(0.0..=1.0).contains(&value) {
-            panic!("Volume must be between 0.0 and 1.0");
+        if !(0.0..=MAX_VOLUME).contains(&value) {
+            panic!("Volume must be between 0.0 and {MAX_VOLUME}");
         }
 
         let calculated_value = calculate_volume_scaled(value);
         self.volume.store(calculated_value, Ordering::SeqCst);
+        // The limiter belongs to the boost. Coming back to 100% or below gets
+        // the untouched signal path immediately, not one release time later.
+        if calculated_value <= 1.0 {
+            self.limiter.reset();
+        }
     }
 
     fn pending_samples(&self) -> usize {
@@ -522,6 +623,13 @@ impl AudioOutput for CpalOutputStream {
 }
 
 fn calculate_volume_scaled(volume: f32) -> f32 {
+    // Above unity the slider is no longer a taper: 1.0–1.5 is straight linear
+    // gain, so 150% is 1.5x amplitude (+3.5 dB) and the readout does not lie
+    // about how much louder it gets.
+    if volume > 1.0 {
+        return volume;
+    }
+
     let volume = volume as f64;
 
     let result = {
@@ -714,14 +822,25 @@ mod tests {
         buffer.push_slice(&[0.5; 8]);
         let volume = AtomicF32::new(1.0);
         let track_gain = AtomicF32::new(1.0);
+        let limiter = LimiterState::new(44100);
         let mut data = [1.0f32; 4];
 
-        fill_f32(&fade, &silenced, &buffer, &volume, &track_gain, 2, &mut data);
+        let gains = Gains {
+            volume: &volume,
+            track_gain: &track_gain,
+            limiter: &limiter,
+        };
+        fill_f32(&fade, &silenced, &buffer, gains, 2, &mut data);
         assert_eq!(data, [0.0; 4]);
         assert_eq!(buffer.len(), 8);
 
         silenced.store(false, Ordering::SeqCst);
-        fill_f32(&fade, &silenced, &buffer, &volume, &track_gain, 2, &mut data);
+        let gains = Gains {
+            volume: &volume,
+            track_gain: &track_gain,
+            limiter: &limiter,
+        };
+        fill_f32(&fade, &silenced, &buffer, gains, 2, &mut data);
         assert_eq!(data, [0.5; 4]);
         assert_eq!(buffer.len(), 4);
     }
@@ -736,5 +855,78 @@ mod tests {
         assert!((f32_samples[1] - 1.0).abs() < 0.001);
         assert!((f32_samples[2] - (-1.0)).abs() < 0.001);
         assert!((f32_samples[3] - 0.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn volume_above_unity_is_linear_gain() {
+        assert_eq!(calculate_volume_scaled(1.0), 1.0);
+        assert_eq!(calculate_volume_scaled(1.25), 1.25);
+        assert_eq!(calculate_volume_scaled(MAX_VOLUME), MAX_VOLUME);
+        // The taper below 100% is untouched.
+        assert!(calculate_volume_scaled(0.5) < 0.5);
+    }
+
+    #[test]
+    fn limiter_pulls_an_over_hot_frame_to_full_scale() {
+        let limiter = LimiterState::new(44100);
+        // 1.5x boost on a mastered-at-0.9 signal: 1.35 before the limiter.
+        let mut data = [0.9f32 * MAX_VOLUME, -0.9 * MAX_VOLUME];
+        apply_limiter(&mut data, 1, &limiter);
+        for sample in data {
+            assert!(sample.abs() <= 1.0 + 1e-5, "{sample} is above unity");
+        }
+        // Both channels share the gain, so the image does not wobble.
+        assert!((data[0] + data[1]).abs() < 1e-6);
+    }
+
+    #[test]
+    fn limiter_leaves_quiet_audio_alone() {
+        let limiter = LimiterState::new(44100);
+        let mut data = [0.25f32, -0.5];
+        apply_limiter(&mut data, 2, &limiter);
+        assert_eq!(data, [0.25, -0.5]);
+    }
+
+    #[test]
+    fn limiter_recovers_toward_unity_after_a_loud_frame() {
+        let limiter = LimiterState::new(44100);
+        let mut loud = [2.0f32, -2.0];
+        apply_limiter(&mut loud, 2, &limiter);
+        let attenuated = limiter.gain.load(Ordering::Relaxed);
+        assert!(attenuated < 0.6);
+
+        // A second of quiet frames is enough for a 150 ms release to finish.
+        let mut quiet = vec![0.1f32; 44100];
+        apply_limiter(&mut quiet, 1, &limiter);
+        assert!((limiter.gain.load(Ordering::Relaxed) - 1.0).abs() < 0.01);
+        // The very first quiet frame still carries the old gain; the end of
+        // the second has recovered.
+        assert!((quiet[0] - 0.05).abs() < 0.01);
+        assert!((quiet[44099] - 0.1).abs() < 0.01);
+    }
+
+    #[test]
+    fn boost_is_applied_and_limited_end_to_end() {
+        let fade = FadeState::new();
+        let silenced = AtomicBool::new(false);
+        let buffer = AudioRingBuffer::new(64);
+        buffer.push_slice(&[0.9, -0.9, 0.01, -0.01]);
+        // The callback stores the scaled value, exactly like `set_volume`.
+        let volume = AtomicF32::new(calculate_volume_scaled(MAX_VOLUME));
+        let track_gain = AtomicF32::new(1.0);
+        let limiter = LimiterState::new(44100);
+        let mut data = [0.0f32; 4];
+
+        let gains = Gains {
+            volume: &volume,
+            track_gain: &track_gain,
+            limiter: &limiter,
+        };
+        fill_f32(&fade, &silenced, &buffer, gains, 2, &mut data);
+        // Boosted, then held under full scale by the limiter.
+        assert!(data.iter().all(|sample| sample.abs() <= 1.0 + 1e-5));
+        assert!(data[0] > 0.9, "the boost should still raise a loud track");
+        // The quiet frame right after is attenuated by the release, not zeroed.
+        assert!(data[2] > 0.0);
     }
 }

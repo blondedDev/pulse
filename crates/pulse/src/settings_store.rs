@@ -967,7 +967,7 @@ impl SettingsStore {
     }
 
     pub fn volume(&self) -> f32 {
-        self.settings.volume
+        self.settings.volume.clamp(0.0, audio_output::MAX_VOLUME)
     }
 
     pub fn duplicate_priority(&self) -> &[String] {
@@ -998,7 +998,7 @@ impl SettingsStore {
     }
 
     pub fn set_volume(&mut self, volume: f32) -> anyhow::Result<()> {
-        self.settings.volume = volume;
+        self.settings.volume = volume.clamp(0.0, audio_output::MAX_VOLUME);
         self.save()
     }
 

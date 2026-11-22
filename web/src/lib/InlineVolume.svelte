@@ -6,6 +6,9 @@
   /// setting (`remote_volume_inline`), carried in the state payload.
   let { remote }: { remote: Remote } = $props();
 
+  /// Same range as the desktop slider: 100% is unity, 150% is the boosted top.
+  const MAX_VOLUME = 1.5;
+
   function onInput(event: Event) {
     const value = Number((event.currentTarget as HTMLInputElement).value);
     remote.previewVolume(value / 100);
@@ -36,11 +39,13 @@
     type="range"
     class="seek min-w-0 flex-1"
     min="0"
-    max="100"
+    max={MAX_VOLUME * 100}
     step="1"
     value={remote.volume * 100}
-    style={`--p:${remote.volume * 100}%`}
+    style={`--p:${(remote.volume / MAX_VOLUME) * 100}%`}
     aria-label="Volume"
+    aria-valuetext={`${Math.round(remote.volume * 100)}%`}
+    title={`Volume ${Math.round(remote.volume * 100)}%`}
     disabled={remote.volumeLocked}
     oninput={onInput}
     onchange={onEnd}

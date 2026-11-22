@@ -85,10 +85,16 @@ impl Volume {
         let initial = cx.global::<crate::settings_store::SettingsStore>().volume();
         let slider = cx.new(|cx| {
             Slider::new(cx)
-                .default_value(initial)
+                // Max before the default: `default_value` clamps to the range
+                // it already knows about, so a stored 150% would become 100%.
                 .min(0.0)
-                .max(1.0)
+                // Up to 150%: the output limiter keeps the extra level from
+                // clipping, and the tooltip says exactly how far past unity
+                // the user has gone.
+                .max(audio_output::MAX_VOLUME)
+                .default_value(initial)
                 .step(0.01)
+                .tooltip_formatter(Box::new(|v| format!("{:.0}%", v * 100.0)))
         });
 
         cx.subscribe(&slider, |this, _, event: &SliderEvent, cx| match event {
@@ -180,7 +186,7 @@ impl Volume {
         if cx.global::<Services>().output.is_exclusive() {
             return;
         }
-        let new = value.clamp(0.0, 1.0);
+        let new = value.clamp(0.0, audio_output::MAX_VOLUME);
         self.volume = new;
         self.is_muted = new <= 0.0;
         if new > 0.0 {

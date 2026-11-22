@@ -31,10 +31,11 @@ impl CoverVolume {
         let slider = cx.new(|cx| {
             Slider::new(cx)
                 .vertical(true)
-                .default_value(initial)
                 .min(0.0)
-                .max(1.0)
+                .max(audio_output::MAX_VOLUME)
+                .default_value(initial)
                 .step(0.01)
+                .tooltip_formatter(Box::new(|v| format!("{:.0}%", v * 100.0)))
         });
 
         let slider_subscription = cx.subscribe(&slider, {

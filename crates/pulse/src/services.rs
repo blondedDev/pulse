@@ -1064,7 +1064,7 @@ pub fn set_volume(cx: &mut App, volume: f32) {
     if services.output.is_exclusive() {
         return;
     }
-    let volume = volume.clamp(0.0, 1.0);
+    let volume = volume.clamp(0.0, audio_output::MAX_VOLUME);
     services.output.set_volume(volume);
     if let Err(e) = cx
         .global_mut::<crate::settings_store::SettingsStore>()

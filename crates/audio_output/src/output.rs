@@ -15,7 +15,7 @@ use audio_common::{AudioBatch, AudioError, AudioSamples, Metadata};
 pub use bit_perfect::{BitPerfectIssue, BitPerfectStatus, UNITY_VOLUME_TOLERANCE};
 use cpal::traits::HostTrait;
 pub use cpal_stream::{
-    AudioOutput, CpalOutputStream, OutputConfig, PlaybackState, SelectedOutputDevice,
+    AudioOutput, CpalOutputStream, MAX_VOLUME, OutputConfig, PlaybackState, SelectedOutputDevice,
 };
 use device::DeviceManager;
 use parking_lot::{Mutex, RwLock};
@@ -1064,7 +1064,8 @@ impl AudioOutput for Output {
     }
 
     fn set_volume(&self, volume: f32) {
-        self.app_volume.store(volume, Ordering::Relaxed);
+        self.app_volume
+            .store(volume.clamp(0.0, MAX_VOLUME), Ordering::Relaxed);
         self.apply_current_volume();
     }
 

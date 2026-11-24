@@ -12,8 +12,8 @@
 # After a new release: bump pkgver, refresh sha256sums (`updpkgsums` while in
 # this directory), then `makepkg -f`.
 pkgname=pulse-appimage
-pkgver=5.8.1
-pkgrel=3
+pkgver=5.8.2
+pkgrel=1
 pkgdesc="Local-first music player, packaged as its self-contained AppImage"
 arch=('x86_64')
 url="https://github.com/blondedDev/pulse"
@@ -28,12 +28,10 @@ source=(
     "pulse.desktop"
     "pulse"
 )
-sha256sums=(
-    '3abeee93f9b7d76b5511836bb36550e5abf6b379d89698fb5108f29bfee7a32b'
-    '09dcb2c15812df6a4501667132cb75ad31a62c59e520d160a70d008b8299b9ed'
-    'SKIP'
-    'SKIP'
-)
+sha256sums=('066467336459229534e3c2b33d3f6e5925fac599f8a2c08918be0050b769f741'
+            '09dcb2c15812df6a4501667132cb75ad31a62c59e520d160a70d008b8299b9ed'
+            '0ef2b955cd421f6cdfa8a8d288510ad98e950478cd4b02ee51a78602171fa632'
+            '3354820c5172d992cb1329f1f4ff3a2d7ac5d630553f0d8616ce77655eae0651')
 backup=('home/blonded/Applications/AppImages/Pulse.AppImage')
 
 package() {

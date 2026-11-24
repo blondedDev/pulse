@@ -12,6 +12,8 @@ actions!(
         PlayPause,
         ExitCoverMode,
         ToggleCoverMode,
+        ToggleLyricsPanel,
+        ToggleQueuePanel,
         PlayNextHovered,
     ]
 );
@@ -35,6 +37,9 @@ pub fn init(cx: &mut App) {
         // Cover view is a layer, not a destination: the same key takes it away
         // and leaves you on the screen you opened it from.
         KeyBinding::new("f", ToggleCoverMode, Some(BINDING)),
+        // The side panels are layers too, and take the key that names them.
+        KeyBinding::new("l", ToggleLyricsPanel, Some(BINDING)),
+        KeyBinding::new("p", ToggleQueuePanel, Some(BINDING)),
         // On the row under the cursor, like the hover buttons do.
         KeyBinding::new("q", PlayNextHovered, Some(BINDING)),
     ]);

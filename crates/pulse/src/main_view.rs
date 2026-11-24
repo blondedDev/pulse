@@ -31,7 +31,7 @@ use crate::cover_volume::CoverVolume;
 use crate::footer::{Footer, ToggleLyricsEvent, ToggleQueueEvent};
 use crate::keyboard_shortcuts::{
     ExitCoverMode, NextTrack, PlayNextHovered, PlayPause, PreviousTrack, SeekBackward, SeekForward,
-    ToggleCoverMode, VolumeDown, VolumeUp,
+    ToggleCoverMode, ToggleLyricsPanel, ToggleQueuePanel, VolumeDown, VolumeUp,
 };
 use crate::library_service::LibraryEvent;
 use crate::library_views::library_view::{LibraryRootTab, LibraryView, LibraryViewEvent};
@@ -487,16 +487,12 @@ impl MainView {
         let cover_lyrics_toggle_subscription = cx.subscribe(
             &cover_mode_view,
             |this, _, event: &ToggleLyricsEvent, cx| {
-                this.footer
-                    .update(cx, |f, cx| f.set_show_lyrics(event.show, cx));
-                this.set_lyrics_visible(event.show, cx);
+                this.set_lyrics_panel(event.show, cx);
             },
         );
         let cover_queue_toggle_subscription =
             cx.subscribe(&cover_mode_view, |this, _, event: &ToggleQueueEvent, cx| {
-                this.footer
-                    .update(cx, |f, cx| f.set_show_queue(event.show, cx));
-                this.set_queue_visible(event.show, cx);
+                this.set_queue_panel(event.show, cx);
             });
         let cover_album_subscription = cx.subscribe(&cover_mode_view, {
             let library_view = library_view.clone();
@@ -835,6 +831,22 @@ impl MainView {
         cx.notify();
     }
 
+    /// Show or hide a side panel and move the footer's toggle with it. The
+    /// footer owns the button state, so anything that opens a panel from
+    /// outside it — the palette, a keyboard shortcut — has to keep the two in
+    /// step, or the next click on the button does nothing.
+    fn set_lyrics_panel(&mut self, show: bool, cx: &mut Context<Self>) {
+        self.footer
+            .update(cx, |footer, cx| footer.set_show_lyrics(show, cx));
+        self.set_lyrics_visible(show, cx);
+    }
+
+    fn set_queue_panel(&mut self, show: bool, cx: &mut Context<Self>) {
+        self.footer
+            .update(cx, |footer, cx| footer.set_show_queue(show, cx));
+        self.set_queue_visible(show, cx);
+    }
+
     fn set_lyrics_visible(&mut self, show: bool, cx: &mut Context<Self>) {
         if self.show_lyrics == show {
             return;
@@ -947,8 +959,8 @@ impl MainView {
                     .update(cx, |view, cx| view.navigate_to_playlist(*id, window, cx));
             }
             CommandPaletteEvent::RunAction(action) => match action {
-                PaletteAction::ToggleQueue => self.set_queue_visible(!self.show_queue, cx),
-                PaletteAction::ToggleLyrics => self.set_lyrics_visible(!self.show_lyrics, cx),
+                PaletteAction::ToggleQueue => self.set_queue_panel(!self.show_queue, cx),
+                PaletteAction::ToggleLyrics => self.set_lyrics_panel(!self.show_lyrics, cx),
                 PaletteAction::ToggleCoverMode => self.set_cover_mode(!self.cover_mode, cx),
                 PaletteAction::OpenSettings => self.open_settings(0, window, cx),
                 PaletteAction::AcquireMusic => {
@@ -1014,6 +1026,39 @@ impl MainView {
         // key handler would be left with nothing to dispatch to.
         self.focus_handle.focus(window, cx);
         self.set_cover_mode(true, cx);
+    }
+
+    /// `L` shows the lyrics panel, `L` again puts it away.
+    ///
+    /// Settings is a full screen with no side panel, so the key is a no-op
+    /// there instead of opening something behind it.
+    fn on_toggle_lyrics_panel(
+        &mut self,
+        _: &ToggleLyricsPanel,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.show_settings {
+            return;
+        }
+        self.set_lyrics_panel(!self.show_lyrics, cx);
+        // Acting from the keyboard must never leave the window without a focus
+        // target, or Space and the arrows go dead until it is clicked.
+        self.focus_handle.focus(window, cx);
+    }
+
+    /// `P` shows the queue panel, `P` again puts it away. Same rules as `L`.
+    fn on_toggle_queue_panel(
+        &mut self,
+        _: &ToggleQueuePanel,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.show_settings {
+            return;
+        }
+        self.set_queue_panel(!self.show_queue, cx);
+        self.focus_handle.focus(window, cx);
     }
 }
 
@@ -1459,6 +1504,8 @@ impl Render for MainView {
                     .on_action(cx.listener(Self::on_play_pause))
                     .on_action(cx.listener(Self::on_exit_cover_mode))
                     .on_action(cx.listener(Self::on_toggle_cover_mode))
+                    .on_action(cx.listener(Self::on_toggle_lyrics_panel))
+                    .on_action(cx.listener(Self::on_toggle_queue_panel))
                     .on_action(cx.listener(Self::on_open_online_settings))
                     .on_action(cx.listener(Self::on_toggle_command_palette))
                     .on_action(cx.listener(Self::on_open_acquire))

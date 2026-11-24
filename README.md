@@ -111,6 +111,8 @@ screen icon. Off by default, with an optional access token.
 | `Q` | queue the hovered track to play next |
 | `Esc` | leave the cover view |
 | `F` | show / hide the cover view |
+| `L` | show / hide the lyrics panel |
+| `P` | show / hide the queue panel |
 
 ## Where things live
 

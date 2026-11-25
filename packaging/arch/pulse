@@ -1,16 +1,22 @@
 #!/bin/sh
-# Run the Pulse AppImage that lives with the rest of the user's AppImages.
+# Run the Pulse AppImage that lives with the user's other AppImages.
 #
-# That file is owned by the user, so Pulse's own updater can replace it in
-# place; the package only owns the launcher, the menu entry and the icon.
-app="$HOME/Applications/AppImages/Pulse.AppImage"
+# The package puts it at ~/Applications/Pulse.AppImage. The older
+# ~/Applications/AppImages/ layout is still looked up, because that is where
+# this machine kept it before; either file is user-owned, so Pulse's own
+# updater can replace whichever one was started.
+app="$HOME/Applications/Pulse.AppImage"
+
+if [ ! -x "$app" ]; then
+    app="$HOME/Applications/AppImages/Pulse.AppImage"
+fi
 
 if [ ! -x "$app" ]; then
     if command -v kdialog >/dev/null 2>&1; then
         kdialog --title "Pulse" \
-            --error "Pulse.AppImage is missing from $HOME/Applications/AppImages"
+            --error "Pulse.AppImage is missing from $HOME/Applications"
     fi
-    echo "error: no executable at $app" >&2
+    echo "error: no Pulse.AppImage under $HOME/Applications" >&2
     exit 1
 fi
 

@@ -1,7 +1,7 @@
 # Maintainer: Aleksandr Popov <blondedDev@users.noreply.github.com>
 #
 # Pulse, installed the way it is published: the self-contained AppImage, placed
-# in the user's own AppImages folder where they keep every other one. The
+# in the user's own Applications folder, where the other AppImages live. The
 # launcher and menu entry are package-owned; the AppImage is user-owned, so
 # Pulse's updater replaces it in place.
 #
@@ -12,8 +12,8 @@
 # After a new release: bump pkgver, refresh sha256sums (`updpkgsums` while in
 # this directory), then `makepkg -f`.
 pkgname=pulse-appimage
-pkgver=5.8.2
-pkgrel=1
+pkgver=5.8.3
+pkgrel=2
 pkgdesc="Local-first music player, packaged as its self-contained AppImage"
 arch=('x86_64')
 url="https://github.com/blondedDev/pulse"
@@ -28,18 +28,18 @@ source=(
     "pulse.desktop"
     "pulse"
 )
-sha256sums=('066467336459229534e3c2b33d3f6e5925fac599f8a2c08918be0050b769f741'
+sha256sums=('fd2c96b6c298b463b79dc14c0eda2e6b58516a1de05e9978c49fae44a3e25abb'
             '09dcb2c15812df6a4501667132cb75ad31a62c59e520d160a70d008b8299b9ed'
             '0ef2b955cd421f6cdfa8a8d288510ad98e950478cd4b02ee51a78602171fa632'
-            '3354820c5172d992cb1329f1f4ff3a2d7ac5d630553f0d8616ce77655eae0651')
-backup=('home/blonded/Applications/AppImages/Pulse.AppImage')
+            'd4ec4370e23e6815344b6570a41982c14c27392aa7e8b93f8d2ca12bfca1aab5')
+backup=('home/blonded/Applications/Pulse.AppImage')
 
 package() {
     # The AppImage goes in the user's folder, not /opt: that is where their
     # other AppImages live, and it is writable by them, which is what lets the
     # in-app updater replace it.
     install -Dm755 "$srcdir/Pulse-${pkgver}-x86_64.AppImage" \
-        "$pkgdir/home/blonded/Applications/AppImages/Pulse.AppImage"
+        "$pkgdir/home/blonded/Applications/Pulse.AppImage"
     chown -R 1000:1000 "$pkgdir/home/blonded"
 
     install -Dm755 "$srcdir/pulse" "$pkgdir/usr/bin/pulse"

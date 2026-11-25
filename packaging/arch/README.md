@@ -4,7 +4,7 @@
 the user's own folder,
 
 ```
-~/Applications/AppImages/Pulse.AppImage
+~/Applications/Pulse.AppImage
 ```
 
 and the package owns the `pulse` launcher, the desktop entry and the icon. The
@@ -32,7 +32,7 @@ paru -U pulse-appimage-<version>-<rel>-x86_64.pkg.tar.zst   # or pacman -U
 
 If `Pulse.AppImage` was put in place by hand before installing, pacman refuses
 to overwrite an unowned file; add
-`--overwrite '/home/blonded/Applications/AppImages/Pulse.AppImage'`.
+`--overwrite '/home/blonded/Applications/Pulse.AppImage'`.
 
 For a new release: change `pkgver`, run `updpkgsums` here to refresh the AppImage
 and icon hashes, then rebuild. Bump `pkgrel` when only the packaging changes.

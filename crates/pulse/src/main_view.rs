@@ -31,7 +31,8 @@ use crate::cover_volume::CoverVolume;
 use crate::footer::{Footer, ToggleLyricsEvent, ToggleQueueEvent};
 use crate::keyboard_shortcuts::{
     ExitCoverMode, NextTrack, PlayNextHovered, PlayPause, PreviousTrack, SeekBackward, SeekForward,
-    ToggleCoverMode, ToggleLyricsPanel, ToggleQueuePanel, VolumeDown, VolumeUp,
+    ToggleCoverMode, ToggleLyricsPanel, ToggleQueuePanel, ToggleShuffle, CycleRepeat, VolumeDown,
+    VolumeUp,
 };
 use crate::library_service::LibraryEvent;
 use crate::library_views::library_view::{LibraryRootTab, LibraryView, LibraryViewEvent};
@@ -1060,6 +1061,23 @@ impl MainView {
         self.set_queue_panel(!self.show_queue, cx);
         self.focus_handle.focus(window, cx);
     }
+
+    /// `S` does what the shuffle button does: on, off, on.
+    fn on_toggle_shuffle(
+        &mut self,
+        _: &ToggleShuffle,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        crate::services::toggle_shuffle(cx);
+        self.focus_handle.focus(window, cx);
+    }
+
+    /// `R` cycles repeat the way its button does: off, all, one, off.
+    fn on_cycle_repeat(&mut self, _: &CycleRepeat, window: &mut Window, cx: &mut Context<Self>) {
+        crate::services::cycle_repeat(cx);
+        self.focus_handle.focus(window, cx);
+    }
 }
 
 impl Render for MainView {
@@ -1506,6 +1524,8 @@ impl Render for MainView {
                     .on_action(cx.listener(Self::on_toggle_cover_mode))
                     .on_action(cx.listener(Self::on_toggle_lyrics_panel))
                     .on_action(cx.listener(Self::on_toggle_queue_panel))
+                    .on_action(cx.listener(Self::on_toggle_shuffle))
+                    .on_action(cx.listener(Self::on_cycle_repeat))
                     .on_action(cx.listener(Self::on_open_online_settings))
                     .on_action(cx.listener(Self::on_toggle_command_palette))
                     .on_action(cx.listener(Self::on_open_acquire))

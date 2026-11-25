@@ -113,6 +113,8 @@ screen icon. Off by default, with an optional access token.
 | `F` | show / hide the cover view |
 | `L` | show / hide the lyrics panel |
 | `P` | show / hide the queue panel |
+| `S` | shuffle |
+| `R` | repeat mode |
 
 ## Where things live
 

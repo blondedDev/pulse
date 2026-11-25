@@ -14,6 +14,8 @@ actions!(
         ToggleCoverMode,
         ToggleLyricsPanel,
         ToggleQueuePanel,
+        ToggleShuffle,
+        CycleRepeat,
         PlayNextHovered,
     ]
 );
@@ -40,6 +42,9 @@ pub fn init(cx: &mut App) {
         // The side panels are layers too, and take the key that names them.
         KeyBinding::new("l", ToggleLyricsPanel, Some(BINDING)),
         KeyBinding::new("p", ToggleQueuePanel, Some(BINDING)),
+        // The two playback modes, on the keys their names start with.
+        KeyBinding::new("s", ToggleShuffle, Some(BINDING)),
+        KeyBinding::new("r", CycleRepeat, Some(BINDING)),
         // On the row under the cursor, like the hover buttons do.
         KeyBinding::new("q", PlayNextHovered, Some(BINDING)),
     ]);

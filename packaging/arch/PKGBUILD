@@ -1,9 +1,11 @@
 # Maintainer: Aleksandr Popov <blondedDev@users.noreply.github.com>
 #
 # Pulse, installed the way it is published: the self-contained AppImage, placed
-# in the user's own Applications folder, where the other AppImages live. The
-# launcher and menu entry are package-owned; the AppImage is user-owned, so
-# Pulse's updater replaces it in place.
+# in its own folder under the user's Applications directory. That folder is the
+# whole install — the image, its `data/` beside it, nothing in ~/.config or
+# ~/.local/share — so removing the folder removes Pulse. The launcher and menu
+# entry are package-owned; the AppImage is user-owned, so Pulse's updater
+# replaces it in place.
 #
 # It is listed in `backup` on purpose: an upgrade must not clobber an AppImage
 # the app has already updated. pacman leaves a `.pacnew` if the packaged version
@@ -13,7 +15,7 @@
 # this directory), then `makepkg -f`.
 pkgname=pulse-appimage
 pkgver=5.8.3
-pkgrel=2
+pkgrel=3
 pkgdesc="Local-first music player, packaged as its self-contained AppImage"
 arch=('x86_64')
 url="https://github.com/blondedDev/pulse"
@@ -32,14 +34,14 @@ sha256sums=('fd2c96b6c298b463b79dc14c0eda2e6b58516a1de05e9978c49fae44a3e25abb'
             '09dcb2c15812df6a4501667132cb75ad31a62c59e520d160a70d008b8299b9ed'
             '0ef2b955cd421f6cdfa8a8d288510ad98e950478cd4b02ee51a78602171fa632'
             'd4ec4370e23e6815344b6570a41982c14c27392aa7e8b93f8d2ca12bfca1aab5')
-backup=('home/blonded/Applications/Pulse.AppImage')
+backup=('home/blonded/Applications/Pulse/Pulse.AppImage')
 
 package() {
-    # The AppImage goes in the user's folder, not /opt: that is where their
-    # other AppImages live, and it is writable by them, which is what lets the
-    # in-app updater replace it.
+    # The AppImage goes in the user's folder, not /opt: it is writable by them,
+    # which is what lets the in-app updater replace it, and Pulse keeps its
+    # library in `data/` beside it.
     install -Dm755 "$srcdir/Pulse-${pkgver}-x86_64.AppImage" \
-        "$pkgdir/home/blonded/Applications/Pulse.AppImage"
+        "$pkgdir/home/blonded/Applications/Pulse/Pulse.AppImage"
     chown -R 1000:1000 "$pkgdir/home/blonded"
 
     install -Dm755 "$srcdir/pulse" "$pkgdir/usr/bin/pulse"

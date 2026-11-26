@@ -64,12 +64,27 @@ chmod +x Pulse-*-x86_64.AppImage
 ./Pulse-*-x86_64.AppImage
 ```
 
-Put it anywhere your user owns — the in-app updater replaces that file. It
-needs the host's Vulkan driver and `libwayland-client`; those are deliberately
-not bundled, because they have to match the GPU.
+The AppImage is portable: it keeps its settings, library database and artwork
+cache in a `data/` folder beside the image, not in `~/.config` or
+`~/.local/share`. So the install is one folder —
+
+```
+~/Applications/Pulse/
+├── Pulse.AppImage
+└── data/
+```
+
+— and deleting that folder removes Pulse and everything it wrote. The updater
+replaces the image in place, which is why it has to live somewhere your user
+owns. Upgrading from an older install finds the old library in
+`~/.local/share/pulse-music` and copies it across on first run; the old folder
+is left alone.
+
+It needs the host's Vulkan driver and `libwayland-client`; those are
+deliberately not bundled, because they have to match the GPU.
 
 On Arch/CachyOS, `packaging/arch/PKGBUILD` installs that AppImage into
-`~/Applications/Pulse.AppImage` and adds the launcher and menu entry.
+`~/Applications/Pulse/Pulse.AppImage` and adds the launcher and menu entry.
 The file stays user-owned, so the in-app updater keeps working; the package
 lists it as a backup file so an upgrade will not clobber a newer copy.
 

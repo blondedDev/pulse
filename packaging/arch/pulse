@@ -1,20 +1,25 @@
 #!/bin/sh
-# Run the Pulse AppImage that lives with the user's other AppImages.
+# Run the Pulse AppImage from its own folder.
 #
-# The package puts it at ~/Applications/Pulse.AppImage. The older
-# ~/Applications/AppImages/ layout is still looked up, because that is where
-# this machine kept it before; either file is user-owned, so Pulse's own
-# updater can replace whichever one was started.
-app="$HOME/Applications/Pulse.AppImage"
+# The install is one folder: ~/Applications/Pulse/Pulse.AppImage plus the
+# `data/` Pulse creates beside it. Nothing is written to ~/.config or
+# ~/.local/share, so deleting the folder removes Pulse and its library.
+#
+# The older flat layouts are still looked up, because that is where this
+# machine kept it before 5.9; any of them is user-owned, so Pulse's own updater
+# can replace whichever one was started.
+app="$HOME/Applications/Pulse/Pulse.AppImage"
 
-if [ ! -x "$app" ]; then
-    app="$HOME/Applications/AppImages/Pulse.AppImage"
-fi
+for fallback in "$HOME/Applications/Pulse.AppImage" \
+                "$HOME/Applications/AppImages/Pulse.AppImage"; do
+    [ -x "$app" ] && break
+    app="$fallback"
+done
 
 if [ ! -x "$app" ]; then
     if command -v kdialog >/dev/null 2>&1; then
         kdialog --title "Pulse" \
-            --error "Pulse.AppImage is missing from $HOME/Applications"
+            --error "Pulse.AppImage is missing from $HOME/Applications/Pulse"
     fi
     echo "error: no Pulse.AppImage under $HOME/Applications" >&2
     exit 1

@@ -220,8 +220,13 @@ fn open_initial_window(cx: &mut App, run_startup_tasks: bool) {
 
 fn main() {
     // Before anything reads settings or the library: bring a Pawse 2.x install
-    // forward to the Pulse directory names.
+    // forward to the Pulse directory names, then — if this is a portable
+    // AppImage — copy a platform install's settings and library in beside it,
+    // so upgrading does not look like a first run.
     legacy_migration::migrate_legacy_dirs();
+    if let Some(root) = paths::portable_root() {
+        legacy_migration::migrate_into_portable(&root);
+    }
 
     let single_instance = match single_instance::acquire() {
         single_instance::Acquire::Duplicate => return,

@@ -300,6 +300,8 @@ pub struct Strings {
     pub rescan_library: SharedString,
     pub version: SharedString,
     pub up_to_date: SharedString,
+    pub update_available: SharedString,
+    pub update_install: SharedString,
     pub updates: SharedString,
     pub check_for_updates: SharedString,
     pub update_checking: SharedString,

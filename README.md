@@ -26,6 +26,12 @@ One library. No account. No cloud.
 - **Get music** — search Amazon Music, Qobuz, Tidal and friends through
   lucida.to without leaving the app, then let the library pick the download up
   on its own. `Ctrl+Shift+G`.
+- **One folder** — the AppImage keeps its settings and library in `data/` beside
+  itself, and updates in place. Install, update and uninstall are all the same
+  folder.
+
+Recent changes live in [CHANGELOG.md](CHANGELOG.md), which is also what the
+release page and the in-app updater show.
 
 ## Offline by default
 

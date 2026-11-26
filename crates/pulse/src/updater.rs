@@ -25,7 +25,7 @@
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use gpui::{App, Context};
+use gpui::{App, Context, SharedString};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 
@@ -43,6 +43,9 @@ pub enum UpdateState {
     Idle,
     Checking,
     UpToDate,
+    /// A newer release exists. Nothing is downloaded until the user asks:
+    /// the release notes are here to be read first.
+    Available { release: Release },
     /// A newer release exists and is on its way down.
     Downloading { version: String },
     /// The new binary is running; this process is about to quit.
@@ -58,6 +61,94 @@ impl UpdateState {
             UpdateState::Checking | UpdateState::Downloading { .. } | UpdateState::Restarting { .. }
         )
     }
+}
+
+/// A release body, reduced to the lines worth showing in a settings row.
+///
+/// GitHub bodies are markdown with headers, badges, install blocks and
+/// horizontal rules. The updater shows the plain lines so a user can see what
+/// changed before installing; links, images and fences are dropped because
+/// there is nothing in a settings row to open them with.
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
+pub struct Notes {
+    lines: Vec<SharedString>,
+}
+
+impl Notes {
+    /// Lines kept. Enough for a release's headline points, short enough that
+    /// the settings page does not turn into a changelog reader.
+    const MAX_LINES: usize = 10;
+
+    fn parse(body: &str) -> Self {
+        let mut lines = Vec::new();
+        let mut in_fence = false;
+        for line in body.lines() {
+            let trimmed = line.trim();
+            if trimmed.starts_with("```") {
+                in_fence = !in_fence;
+                continue;
+            }
+            // The release body carries install instructions after a rule; the
+            // notes end there.
+            if trimmed == "---" {
+                break;
+            }
+            if in_fence || trimmed.is_empty() {
+                continue;
+            }
+            // Images and badges carry no text worth showing; links keep their
+            // label.
+            if trimmed.starts_with("![") || trimmed.starts_with("<!--") {
+                continue;
+            }
+            let text = strip_links(trimmed.trim_start_matches('#').trim());
+            let text = text.trim_start_matches(['-', '*']).trim();
+            if text.is_empty() {
+                continue;
+            }
+            lines.push(SharedString::from(text.to_string()));
+            if lines.len() == Self::MAX_LINES {
+                break;
+            }
+        }
+        Self { lines }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.lines.is_empty()
+    }
+
+    pub fn lines(&self) -> &[SharedString] {
+        &self.lines
+    }
+}
+
+/// `[label](url)` becomes `label`; anything else is left alone.
+fn strip_links(line: &str) -> String {
+    let mut out = String::with_capacity(line.len());
+    let mut rest = line;
+    while let Some(start) = rest.find('[') {
+        let (before, from_start) = rest.split_at(start);
+        out.push_str(before);
+        let Some(mid) = from_start.find("](") else {
+            out.push_str(from_start);
+            return out;
+        };
+        let label = &from_start[1..mid];
+        let after = &from_start[mid + 2..];
+        match after.find(')') {
+            Some(end) => {
+                out.push_str(label);
+                rest = &after[end + 1..];
+            }
+            None => {
+                out.push_str(from_start);
+                return out;
+            }
+        }
+    }
+    out.push_str(rest);
+    out
 }
 
 /// The updater. One per process, held by `Services`; the Settings row reads it
@@ -124,15 +215,31 @@ impl Updater {
                 return;
             }
 
-            let version = latest.version.clone();
             let _ = this.update(cx, |this, cx| {
-                this.state = UpdateState::Downloading {
-                    version: version.clone(),
-                };
+                this.state = UpdateState::Available { release: latest };
                 cx.notify();
             });
+        })
+        .detach();
+    }
 
-            let download = latest.clone();
+    /// Download and install the release the last check found.
+    ///
+    /// Separate from [`check`](Self::check) so the notes can be read first: an
+    /// update that starts downloading the moment it is found gives nobody a
+    /// chance to see what changed.
+    pub fn install(&mut self, cx: &mut Context<Self>) {
+        let UpdateState::Available { release } = self.state.clone() else {
+            return;
+        };
+        let version = release.version.clone();
+        self.state = UpdateState::Downloading {
+            version: version.clone(),
+        };
+        cx.notify();
+
+        cx.spawn(async move |this, cx| {
+            let download = release.clone();
             let installed = cx
                 .background_executor()
                 .spawn(async move { download_and_install(&download) })
@@ -212,8 +319,10 @@ struct Asset {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-struct Release {
-    version: String,
+pub struct Release {
+    pub version: String,
+    /// The release body, already split into readable lines.
+    pub notes: Notes,
     /// The tarball with the bare binary. Always present.
     archive: Asset,
     /// Published alongside the tarball; optional so an older release still
@@ -224,6 +333,8 @@ struct Release {
 #[derive(Deserialize)]
 struct ReleaseJson {
     tag_name: String,
+    #[serde(default)]
+    body: String,
     #[serde(default)]
     assets: Vec<AssetJson>,
 }
@@ -288,6 +399,7 @@ fn release_from_json(json: ReleaseJson) -> Result<Release, String> {
 
     Ok(Release {
         version: json.tag_name,
+        notes: Notes::parse(&json.body),
         archive,
         appimage,
     })
@@ -519,6 +631,64 @@ mod tests {
     use super::*;
     use std::io::Write as _;
     use std::os::unix::fs::PermissionsExt as _;
+
+    /// The settings row shows these lines; fenced install blocks, images and
+    /// link syntax are noise there.
+    #[test]
+    fn release_notes_keep_the_readable_lines() {
+        let body = "Prebuilt for **x86_64 Linux**.\n\n                    ![screenshot](https://example.test/a.png)\n                    ## Highlights\n                    - The AppImage is the install\n                    * Settings live beside it\n                    ```sh\n\
+                    mv Pulse.AppImage ~/Applications/Pulse/\n\
+                    ```\n                    See [the notes](https://example.test/notes) for more.\n\
+                    ---\n\
+                    Prebuilt for **x86_64 Linux**.\n";
+        let notes = Notes::parse(body);
+        assert_eq!(
+            notes.lines(),
+            [
+                "Prebuilt for **x86_64 Linux**.",
+                "Highlights",
+                "The AppImage is the install",
+                "Settings live beside it",
+                "See the notes for more.",
+            ]
+        );
+    }
+
+    #[test]
+    fn release_body_reaches_the_release() {
+        let json: ReleaseJson = serde_json::from_str(
+            r#"{
+                "tag_name": "v9.9.9",
+                "body": "- one\n- two",
+                "assets": [
+                    {"name": "pulse-v9.9.9-x86_64-linux.tar.gz",
+                     "browser_download_url": "https://example.test/tar"},
+                    {"name": "pulse-v9.9.9-x86_64-linux.tar.gz.sha256",
+                     "browser_download_url": "https://example.test/sha"}
+                ]
+            }"#,
+        )
+        .unwrap();
+        let release = release_from_json(json).unwrap();
+        assert_eq!(release.notes.lines(), ["one", "two"]);
+    }
+
+    #[test]
+    fn a_release_without_a_body_has_no_notes() {
+        let json: ReleaseJson = serde_json::from_str(
+            r#"{
+                "tag_name": "v9.9.9",
+                "assets": [
+                    {"name": "pulse-v9.9.9-x86_64-linux.tar.gz",
+                     "browser_download_url": "https://example.test/tar"},
+                    {"name": "pulse-v9.9.9-x86_64-linux.tar.gz.sha256",
+                     "browser_download_url": "https://example.test/sha"}
+                ]
+            }"#,
+        )
+        .unwrap();
+        assert!(release_from_json(json).unwrap().notes.is_empty());
+    }
 
     #[test]
     fn versions_compare_numerically() {

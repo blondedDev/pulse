@@ -91,6 +91,17 @@ jobs:
           APPIMAGE="Pulse-${GITHUB_REF_NAME}-x86_64.AppImage"
           sha256sum "$APPIMAGE" > "$APPIMAGE.sha256"
 
+      # The release body is the changelog section for this tag, then the
+      # install instructions. `generate_release_notes` would replace both with
+      # commit titles, and the app shows the same body, so it is deliberately
+      # not used.
+      - name: Collect release notes
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          python3 scripts/changelog_section.py "$GITHUB_REF_NAME" > release-notes.md
+          printf '\n---\n\n' >> release-notes.md
+          cat .github/release-footer.md >> release-notes.md
+
       - name: Attach to release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
@@ -100,41 +111,4 @@ jobs:
             pulse-*.tar.gz.sha256
             Pulse-*.AppImage
             Pulse-*.AppImage.sha256
-          generate_release_notes: true
-          body: |
-            Prebuilt for **x86_64 Linux**.
-
-            **The AppImage is the install.** It is portable: settings, the
-            library database and artwork live in a `data/` folder beside the
-            image, not in `~/.config` or `~/.local/share`. One folder —
-
-            ```
-            ~/Applications/Pulse/
-            ├── Pulse.AppImage
-            └── data/
-            ```
-
-            — and deleting it removes Pulse and everything it wrote.
-
-            ```sh
-            mkdir -p ~/Applications/Pulse
-            chmod +x Pulse-${{ github.ref_name }}-x86_64.AppImage
-            mv Pulse-${{ github.ref_name }}-x86_64.AppImage ~/Applications/Pulse/Pulse.AppImage
-            ~/Applications/Pulse/Pulse.AppImage
-            ```
-
-            The in-app updater replaces that file in place, so it needs to live
-            somewhere your user owns. Upgrading from 5.8 copies the old library
-            in on first run and leaves `~/.local/share/pulse-music` untouched.
-
-            Or the tarball:
-
-            ```sh
-            tar -xzf pulse-${{ github.ref_name }}-x86_64-linux.tar.gz
-            install -m 755 pulse ~/.local/bin/pulse
-            ```
-
-            Requires PipeWire with `pipewire-alsa`, plus `alsa-lib`,
-            `libxkbcommon` and `libxcb` at runtime. The AppImage also needs the
-            host's Vulkan driver and `libwayland-client`, which are not bundled
-            because they have to match the GPU.
+          body_path: release-notes.md

@@ -872,15 +872,33 @@ fn version_group(updater: Entity<crate::updater::Updater>) -> SettingGroup {
 
                 let state = updater.read(cx).state().clone();
                 let busy = state.busy();
+                let available = matches!(state, UpdateState::Available { .. });
+                let notes = match &state {
+                    UpdateState::Available { release } => Some(release.notes.clone()),
+                    _ => None,
+                };
                 let (status, detail) = match &state {
                     UpdateState::Idle => (None, None),
                     UpdateState::Checking => (Some(tr().update_checking.clone()), None),
                     UpdateState::UpToDate => (Some(tr().up_to_date.clone()), None),
+                    UpdateState::Available { release } => (
+                        Some(SharedString::from(format!(
+                            "{} {}",
+                            tr().update_available,
+                            release.version
+                        ))),
+                        None,
+                    ),
                     UpdateState::Downloading { .. } => (Some(tr().update_downloading.clone()), None),
                     UpdateState::Restarting { .. } => (Some(tr().update_restarting.clone()), None),
                     UpdateState::Failed(error) => {
                         (Some(tr().update_failed.clone()), Some(error.clone()))
                     }
+                };
+                let label = if available {
+                    tr().update_install.clone()
+                } else {
+                    tr().check_for_updates.clone()
                 };
                 let on_click = updater.clone();
 
@@ -904,12 +922,35 @@ fn version_group(updater: Entity<crate::updater::Updater>) -> SettingGroup {
                                 .child(detail),
                         )
                     })
+                    // What changed, before the download starts: an update that
+                    // installs itself on discovery gives nobody a chance to
+                    // read this.
+                    .when_some(notes, |this, notes| {
+                        this.child(
+                            v_flex()
+                                .items_end()
+                                .gap_1()
+                                .max_w(px(320.))
+                                .children(notes.lines().iter().map(|line| {
+                                    div()
+                                        .text_xs()
+                                        .text_color(Colors::muted_foreground(cx))
+                                        .child(line.clone())
+                                })),
+                        )
+                    })
                     .child(
                         Button::new("check-updates")
-                            .label(tr().check_for_updates.clone())
+                            .label(label)
                             .disabled(busy)
                             .on_click(move |_, _, cx| {
-                                on_click.update(cx, |this, cx| this.check(cx));
+                                on_click.update(cx, |this, cx| {
+                                    if available {
+                                        this.install(cx);
+                                    } else {
+                                        this.check(cx);
+                                    }
+                                });
                             }),
                     )
             }),

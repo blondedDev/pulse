@@ -29,7 +29,7 @@ jobs:
           # scripts, and a missing one fails the build with a bare exit 101
           # ten minutes in.
           pacman -Syu --noconfirm --needed \
-            base-devel rust cargo git nodejs npm \
+            base-devel rust cargo git nodejs npm python3 \
             pipewire alsa-lib clang cmake pkgconf curl \
             fontconfig freetype2 \
             libxkbcommon libxkbcommon-x11 libxcb libx11 wayland \

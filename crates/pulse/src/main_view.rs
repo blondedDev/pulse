@@ -125,6 +125,10 @@ pub struct MainView {
     _blur_intensity_slider: Entity<SliderState>,
     _blur_intensity_slider_observe: Subscription,
     _blur_intensity_slider_subscription: Subscription,
+    _bass_strength_slider_observe: Subscription,
+    _bass_strength_slider_subscription: Subscription,
+    _bass_smoothing_slider_observe: Subscription,
+    _bass_smoothing_slider_subscription: Subscription,
     _blur_interface_opacity_slider: Entity<SliderState>,
     _blur_interface_opacity_slider_observe: Subscription,
     _blur_interface_opacity_slider_subscription: Subscription,
@@ -301,6 +305,49 @@ impl MainView {
             },
         );
 
+        let saved_bass_strength = cx.global::<SettingsStore>().bass_reaction().strength;
+        let bass_strength_slider: Entity<SliderState> = cx.new(|_| {
+            SliderState::new()
+                .min(crate::settings_store::BASS_STRENGTH_MIN)
+                .max(crate::settings_store::BASS_STRENGTH_MAX)
+                .step(1.)
+                .default_value(saved_bass_strength)
+        });
+        let bass_strength_slider_observe = cx.observe(&bass_strength_slider, |_, _, cx| cx.notify());
+        let bass_strength_slider_subscription =
+            cx.subscribe(&bass_strength_slider, |_, _, event: &SliderEvent, cx| {
+                let SliderEvent::Change(value) = event else {
+                    return;
+                };
+                let mut prefs = cx.global::<SettingsStore>().bass_reaction();
+                prefs.strength = value.start();
+                if let Err(e) = cx.global_mut::<SettingsStore>().set_bass_reaction(prefs) {
+                    crate::settings_store::notify_save_error(cx, e);
+                }
+            });
+
+        let saved_bass_smoothing = cx.global::<SettingsStore>().bass_reaction().smoothing;
+        let bass_smoothing_slider: Entity<SliderState> = cx.new(|_| {
+            SliderState::new()
+                .min(crate::settings_store::BASS_SMOOTHING_MIN)
+                .max(crate::settings_store::BASS_SMOOTHING_MAX)
+                .step(0.05)
+                .default_value(saved_bass_smoothing)
+        });
+        let bass_smoothing_slider_observe =
+            cx.observe(&bass_smoothing_slider, |_, _, cx| cx.notify());
+        let bass_smoothing_slider_subscription =
+            cx.subscribe(&bass_smoothing_slider, |_, _, event: &SliderEvent, cx| {
+                let SliderEvent::Change(value) = event else {
+                    return;
+                };
+                let mut prefs = cx.global::<SettingsStore>().bass_reaction();
+                prefs.smoothing = value.start();
+                if let Err(e) = cx.global_mut::<SettingsStore>().set_bass_reaction(prefs) {
+                    crate::settings_store::notify_save_error(cx, e);
+                }
+            });
+
         let remote_port_input = cx.new(|cx| {
             InputState::new(window, cx)
                 .default_value(cx.global::<SettingsStore>().remote_port().to_string())
@@ -413,6 +460,8 @@ impl MainView {
             let lyrics_slider = lyrics_slider.clone();
             let blur_intensity_slider = blur_intensity_slider.clone();
             let blur_interface_opacity_slider = blur_interface_opacity_slider.clone();
+            let bass_strength_slider = bass_strength_slider.clone();
+            let bass_smoothing_slider = bass_smoothing_slider.clone();
             let remote_port_input = remote_port_input.clone();
             let window_size_inputs = window_size_inputs.clone();
             let library_page = library_page.clone();
@@ -423,6 +472,8 @@ impl MainView {
                         lyrics: lyrics_slider.clone(),
                         blur_intensity: blur_intensity_slider.clone(),
                         blur_interface_opacity: blur_interface_opacity_slider.clone(),
+                        bass_strength: bass_strength_slider.clone(),
+                        bass_smoothing: bass_smoothing_slider.clone(),
                     },
                     remote_port_input.clone(),
                     window_size_inputs.clone(),
@@ -439,6 +490,8 @@ impl MainView {
                 lyrics: lyrics_slider.clone(),
                 blur_intensity: blur_intensity_slider.clone(),
                 blur_interface_opacity: blur_interface_opacity_slider.clone(),
+                bass_strength: bass_strength_slider.clone(),
+                bass_smoothing: bass_smoothing_slider.clone(),
             },
             remote_port_input.clone(),
             window_size_inputs.clone(),
@@ -577,6 +630,8 @@ impl MainView {
                         lyrics: lyrics_slider.clone(),
                         blur_intensity: blur_intensity_slider.clone(),
                         blur_interface_opacity: blur_interface_opacity_slider.clone(),
+                        bass_strength: bass_strength_slider.clone(),
+                        bass_smoothing: bass_smoothing_slider.clone(),
                     },
                     remote_port_input.clone(),
                     window_size_inputs.clone(),
@@ -674,6 +729,10 @@ impl MainView {
             _blur_intensity_slider: blur_intensity_slider,
             _blur_intensity_slider_observe: blur_intensity_slider_observe,
             _blur_intensity_slider_subscription: blur_intensity_slider_subscription,
+            _bass_strength_slider_observe: bass_strength_slider_observe,
+            _bass_strength_slider_subscription: bass_strength_slider_subscription,
+            _bass_smoothing_slider_observe: bass_smoothing_slider_observe,
+            _bass_smoothing_slider_subscription: bass_smoothing_slider_subscription,
             _blur_interface_opacity_slider: blur_interface_opacity_slider,
             _blur_interface_opacity_slider_observe: blur_interface_opacity_slider_observe,
             _blur_interface_opacity_slider_subscription: blur_interface_opacity_slider_subscription,

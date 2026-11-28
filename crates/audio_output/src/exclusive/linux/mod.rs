@@ -8,6 +8,8 @@ use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::Duration;
 
+use crate::levels::{LevelMeter, Levels};
+
 use alsa::pcm::PCM;
 use audio_common::{AudioBatch, AudioError};
 
@@ -68,6 +70,7 @@ fn write_all(pcm: &PCM, buf: &[f32], channels: usize) -> Result<(), alsa::Error>
 fn render_loop(shared: &LinuxShared, pcm: PCM, fmt: DeviceFormat) {
     let channels = shared.channels as usize;
     let mut buf = vec![0.0f32; fmt.period_frames * channels];
+    let mut meter = LevelMeter::new(shared.ctx.sample_rate as f32, channels);
     let mut started = false;
 
     while shared.running.load(Ordering::Relaxed) {
@@ -85,7 +88,7 @@ fn render_loop(shared: &LinuxShared, pcm: PCM, fmt: DeviceFormat) {
             started = true;
         }
 
-        fill(&shared.ctx, &mut buf);
+        fill(&shared.ctx, &mut buf, &mut meter);
 
         if let Err(e) = write_all(&pcm, &buf, channels)
             && pcm.try_recover(e, true).is_err()
@@ -111,6 +114,7 @@ impl PipewireBackend {
         config: OutputConfig,
         device_uid: &str,
         _original_rate: Option<f64>,
+        levels: Arc<Levels>,
     ) -> Result<Self, AudioError> {
         let ctx = Arc::new(RenderCtx {
             buffer,
@@ -118,6 +122,7 @@ impl PipewireBackend {
             fade: crate::cpal_stream::FadeState::new(),
             sample_rate: config.sample_rate,
             channels: config.channels,
+            levels,
         });
 
         let shared = Arc::new(LinuxShared {

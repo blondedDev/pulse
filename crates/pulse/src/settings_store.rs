@@ -401,6 +401,46 @@ impl Default for AnimationSettings {
     }
 }
 
+/// How much the cover moves with the music.
+///
+/// Off by default. Motion tied to the audio is a strong opinion, and the app
+/// already keeps a rule that nothing moves unless it was asked to.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct BassReactionSettings {
+    #[serde(default)]
+    pub enabled: bool,
+    /// How far the cover lifts at full bass, in pixels.
+    #[serde(default = "default_bass_strength")]
+    pub strength: f32,
+    /// 0 follows the kick, 1 drifts behind it. A time constant, in disguise.
+    #[serde(default = "default_bass_smoothing")]
+    pub smoothing: f32,
+}
+
+fn default_bass_strength() -> f32 {
+    14.0
+}
+
+fn default_bass_smoothing() -> f32 {
+    0.35
+}
+
+impl Default for BassReactionSettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            strength: default_bass_strength(),
+            smoothing: default_bass_smoothing(),
+        }
+    }
+}
+
+/// Slider bounds, kept here so the view and the store cannot disagree.
+pub const BASS_STRENGTH_MIN: f32 = 0.0;
+pub const BASS_STRENGTH_MAX: f32 = 40.0;
+pub const BASS_SMOOTHING_MIN: f32 = 0.0;
+pub const BASS_SMOOTHING_MAX: f32 = 1.0;
+
 /// Which ReplayGain value to apply.
 ///
 /// Off by default: it changes how loud the music is, which is not something to
@@ -462,6 +502,8 @@ pub struct UserSettings {
     pub rewind_enabled: bool,
     #[serde(default)]
     pub animations: AnimationSettings,
+    #[serde(default)]
+    pub bass_reaction: BassReactionSettings,
     #[serde(default = "default_true")]
     pub export_include_settings: bool,
     #[serde(default)]
@@ -608,6 +650,7 @@ impl Default for UserSettings {
             playlists_enabled: true,
             rewind_enabled: true,
             animations: AnimationSettings::default(),
+            bass_reaction: BassReactionSettings::default(),
             export_include_settings: true,
             export_include_library: false,
             folders_enabled: true,
@@ -1192,6 +1235,15 @@ impl SettingsStore {
 
     pub fn set_animations(&mut self, prefs: AnimationSettings) -> anyhow::Result<()> {
         self.settings.animations = prefs;
+        self.save()
+    }
+
+    pub fn bass_reaction(&self) -> BassReactionSettings {
+        self.settings.bass_reaction
+    }
+
+    pub fn set_bass_reaction(&mut self, prefs: BassReactionSettings) -> anyhow::Result<()> {
+        self.settings.bass_reaction = prefs;
         self.save()
     }
 
@@ -1865,6 +1917,7 @@ mod tests {
             albums_enabled: false,
             artists_enabled: true,
             animations: AnimationSettings::default(),
+            bass_reaction: BassReactionSettings::default(),
             export_include_settings: true,
             export_include_library: false,
             dynamic_theme: false,

@@ -7,6 +7,7 @@ use std::sync::Arc;
 use audio_common::{AudioBatch, AudioError};
 
 use crate::cpal_stream::{AudioOutput, OutputConfig};
+use crate::levels::Levels;
 use crate::ring_buffer::AudioRingBuffer;
 
 // ----- Event type ------------------------------------------------------------
@@ -73,8 +74,10 @@ impl ExclusiveOutput {
         config: OutputConfig,
         device_uid: &str,
         original_rate: Option<f64>,
+        levels: Arc<Levels>,
     ) -> Result<Self, AudioError> {
-        let backend = linux::PipewireBackend::new(buffer, config, device_uid, original_rate)?;
+        let backend =
+            linux::PipewireBackend::new(buffer, config, device_uid, original_rate, levels)?;
         let rate = backend.original_rate();
         Ok(ExclusiveOutput {
             backend: Box::new(backend),

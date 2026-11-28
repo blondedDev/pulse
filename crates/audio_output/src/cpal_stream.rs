@@ -1,6 +1,8 @@
 pub use crate::ring_buffer::AudioRingBuffer;
 
 use atomic_float::AtomicF32;
+
+use crate::levels::{LevelMeter, Levels};
 use audio_common::{AudioBatch, AudioError};
 use cpal::traits::{DeviceTrait, StreamTrait};
 use cpal::{FromSample, OutputCallbackInfo, SampleFormat, SizedSample, Stream, StreamConfig};
@@ -78,6 +80,9 @@ pub struct CpalOutputStream {
     silenced: Arc<AtomicBool>,
     device_lost: Arc<AtomicBool>,
     limiter: Arc<LimiterState>,
+    /// Measured in the callback, read by the UI. Shared across stream swaps so
+    /// a view can hold one handle for the life of the process.
+    levels: Arc<Levels>,
     pub config: OutputConfig,
 }
 
@@ -334,10 +339,15 @@ struct RenderState {
     /// level survives a track change.
     track_gain: Arc<AtomicF32>,
     limiter: Arc<LimiterState>,
+    /// Shared with the UI; written at the end of every callback.
+    levels: Arc<Levels>,
+    /// Per-callback filter and envelope state. Cloned with the render state, so
+    /// each stream measures with its own history.
+    meter: LevelMeter,
 }
 
 impl RenderState {
-    fn fill(&self, channels: usize, data: &mut [f32]) {
+    fn fill(&mut self, channels: usize, data: &mut [f32]) {
         fill_f32(
             &self.fade,
             &self.silenced,
@@ -350,6 +360,10 @@ impl RenderState {
             channels,
             data,
         );
+        // Measure what the device is about to play, tail included: the zeros
+        // that pad an underrun are silence, and silence should decay the
+        // envelope like anything else.
+        self.meter.observe(data, &self.levels);
     }
 }
 
@@ -359,7 +373,7 @@ impl RenderState {
 fn build_converting_stream<T>(
     device: &cpal::Device,
     config: &StreamConfig,
-    render: RenderState,
+    mut render: RenderState,
     device_lost: Arc<AtomicBool>,
     channels: usize,
 ) -> Result<Stream, cpal::BuildStreamError>
@@ -402,6 +416,11 @@ fn preferred_period(device: &cpal::Device, config: &OutputConfig) -> Option<u32>
 }
 
 impl CpalOutputStream {
+    /// The levels this stream measures, for a view that wants to react to them.
+    pub fn levels(&self) -> Arc<Levels> {
+        self.levels.clone()
+    }
+
     /// ReplayGain for the current track, as a linear multiplier.
     ///
     /// Not part of `AudioOutput`: it only exists on the shared (software) path.
@@ -416,6 +435,7 @@ impl CpalOutputStream {
         buffer: Arc<AudioRingBuffer>,
         output_config: OutputConfig,
         device: SelectedOutputDevice,
+        levels: Arc<Levels>,
     ) -> Result<Self, AudioError> {
         let volume = Arc::new(AtomicF32::new(1.0));
         let track_gain = Arc::new(AtomicF32::new(1.0));
@@ -429,6 +449,11 @@ impl CpalOutputStream {
             fade: fade.clone(),
             silenced: silenced.clone(),
             limiter: limiter.clone(),
+            levels: levels.clone(),
+            meter: LevelMeter::new(
+                output_config.sample_rate as f32,
+                output_config.channels as usize,
+            ),
         };
         let device_lost = Arc::new(AtomicBool::new(false));
         let channels = output_config.channels as usize;
@@ -447,7 +472,7 @@ impl CpalOutputStream {
         let build = |stream_config: &StreamConfig| -> Result<Stream, cpal::BuildStreamError> {
             match format {
                 SampleFormat::F32 => {
-                    let (render, device_lost) = (render.clone(), device_lost.clone());
+                    let (mut render, device_lost) = (render.clone(), device_lost.clone());
                     dev.build_output_stream(
                         stream_config,
                         move |data: &mut [f32], _: &OutputCallbackInfo| {
@@ -522,6 +547,7 @@ impl CpalOutputStream {
             silenced,
             device_lost,
             limiter,
+            levels,
         })
     }
 
@@ -689,7 +715,12 @@ mod tests {
     fn test_default_output() {
         let (h, d) = make_test_device();
         let selected_device = SelectedOutputDevice { host: h, device: d };
-        let output = CpalOutputStream::new(make_test_buffer(), make_test_config(), selected_device);
+        let output = CpalOutputStream::new(
+            make_test_buffer(),
+            make_test_config(),
+            selected_device,
+            Arc::new(Levels::new()),
+        );
         assert!(output.is_ok(), "Should create default output");
     }
 
@@ -698,7 +729,12 @@ mod tests {
         let (h, d) = make_test_device();
         let selected_device = SelectedOutputDevice { host: h, device: d };
         let output =
-            CpalOutputStream::new(make_test_buffer(), make_test_config(), selected_device).unwrap();
+            CpalOutputStream::new(
+            make_test_buffer(),
+            make_test_config(),
+            selected_device,
+            Arc::new(Levels::new()),
+        ).unwrap();
 
         assert!(!output.take_device_lost());
 
@@ -733,7 +769,12 @@ mod tests {
         let (h, d) = make_test_device();
         let selected_device = SelectedOutputDevice { host: h, device: d };
         let output =
-            CpalOutputStream::new(make_test_buffer(), make_test_config(), selected_device).unwrap();
+            CpalOutputStream::new(
+            make_test_buffer(),
+            make_test_config(),
+            selected_device,
+            Arc::new(Levels::new()),
+        ).unwrap();
         output.resume();
         assert!(output.is_playing());
 
@@ -751,7 +792,12 @@ mod tests {
         let (h, d) = make_test_device();
         let selected_device = SelectedOutputDevice { host: h, device: d };
         let output =
-            CpalOutputStream::new(make_test_buffer(), make_test_config(), selected_device).unwrap();
+            CpalOutputStream::new(
+            make_test_buffer(),
+            make_test_config(),
+            selected_device,
+            Arc::new(Levels::new()),
+        ).unwrap();
         output.pause();
         thread::sleep(std::time::Duration::from_millis(10));
 
@@ -766,7 +812,12 @@ mod tests {
         let (h, d) = make_test_device();
         let selected_device = SelectedOutputDevice { host: h, device: d };
         let output =
-            CpalOutputStream::new(make_test_buffer(), make_test_config(), selected_device).unwrap();
+            CpalOutputStream::new(
+            make_test_buffer(),
+            make_test_config(),
+            selected_device,
+            Arc::new(Levels::new()),
+        ).unwrap();
         output.resume();
         output.write(&make_test_batch(vec![0.5, -0.5, 0.3, -0.3]));
 
@@ -783,7 +834,12 @@ mod tests {
         let (h, d) = make_test_device();
         let selected_device = SelectedOutputDevice { host: h, device: d };
         let output =
-            CpalOutputStream::new(make_test_buffer(), make_test_config(), selected_device).unwrap();
+            CpalOutputStream::new(
+            make_test_buffer(),
+            make_test_config(),
+            selected_device,
+            Arc::new(Levels::new()),
+        ).unwrap();
         assert!(output.silenced.load(Ordering::SeqCst));
 
         output.resume();
@@ -807,7 +863,12 @@ mod tests {
         let (h, d) = make_test_device();
         let selected_device = SelectedOutputDevice { host: h, device: d };
         let output =
-            CpalOutputStream::new(make_test_buffer(), make_test_config(), selected_device).unwrap();
+            CpalOutputStream::new(
+            make_test_buffer(),
+            make_test_config(),
+            selected_device,
+            Arc::new(Levels::new()),
+        ).unwrap();
         output.resume();
         output.release();
         assert!(output.is_playing());

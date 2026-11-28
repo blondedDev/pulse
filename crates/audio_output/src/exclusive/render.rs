@@ -2,6 +2,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU8, Ordering};
 
 use crate::cpal_stream::{FadeState, apply_fade_gain};
+use crate::levels::{LevelMeter, Levels};
 use crate::ring_buffer::AudioRingBuffer;
 
 pub(crate) const STATE_IDLE: u8 = 0;
@@ -16,6 +17,9 @@ pub(crate) struct RenderCtx {
     pub(crate) fade: FadeState,
     pub(crate) sample_rate: u32,
     pub(crate) channels: u8,
+    /// Measured here too: exclusive mode is the one people listen to, so the
+    /// visual should react there as well.
+    pub(crate) levels: Arc<Levels>,
 }
 
 /// Fills `out` (an interleaved f32 output slice) with the next block of audio,
@@ -27,11 +31,13 @@ pub(crate) struct RenderCtx {
 /// also emits silence but leaves the ring buffer intact, so a later resume can
 /// fade the same samples back in seamlessly. The near-unity skip inside
 /// `apply_fade_gain` makes the steady state (no fade running) a no-op.
-pub(crate) fn fill(ctx: &RenderCtx, out: &mut [f32]) {
+pub(crate) fn fill(ctx: &RenderCtx, out: &mut [f32], meter: &mut LevelMeter) {
     if ctx.playing.load(Ordering::Relaxed) != STATE_PLAYING || ctx.fade.is_frozen() {
         for s in out.iter_mut() {
             *s = 0.0;
         }
+        // Silence is still worth measuring: it decays the envelope.
+        meter.observe(out, &ctx.levels);
         return;
     }
 
@@ -42,4 +48,6 @@ pub(crate) fn fill(ctx: &RenderCtx, out: &mut [f32]) {
     for s in &mut out[read..] {
         *s = 0.0;
     }
+
+    meter.observe(out, &ctx.levels);
 }

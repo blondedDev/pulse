@@ -3,6 +3,7 @@ pub mod cpal_stream;
 mod default_watch;
 pub mod device;
 pub mod exclusive;
+pub mod levels;
 pub mod ring_buffer;
 pub mod thread_priority;
 
@@ -20,6 +21,7 @@ pub use cpal_stream::{
 use device::DeviceManager;
 use parking_lot::{Mutex, RwLock};
 
+use crate::levels::Levels;
 use crate::ring_buffer::AudioRingBuffer;
 
 enum OutputMode {
@@ -123,6 +125,9 @@ pub struct Output {
     /// ReplayGain for the current track. Applied on the shared path only, next
     /// to the volume; exclusive/native mode stays untouched.
     track_gain: AtomicF32,
+    /// What the current stream is playing, measured in its callback. One handle
+    /// for the whole output so a view does not have to follow stream swaps.
+    levels: Arc<Levels>,
     follow_default: AtomicBool,
     default_watch: Option<default_watch::DefaultDeviceWatcher>,
     play_intent: AtomicBool,
@@ -206,12 +211,16 @@ impl Output {
         let mut device_manager =
             DeviceManager::from_host(&host).unwrap_or_else(|_| DeviceManager::headless(&host));
 
+        // Created before the first stream so the handle is stable for the life
+        // of the output, whatever happens to the stream underneath.
+        let levels = Arc::new(Levels::new());
+
         let (current, events) = match device_manager.resolve_device().and_then(|device| {
             let selected = SelectedOutputDevice {
                 host: host.clone(),
                 device,
             };
-            CpalOutputStream::new(buffer, DEFAULT_CONFIG, selected)
+            CpalOutputStream::new(buffer, DEFAULT_CONFIG, selected, levels.clone())
         }) {
             Ok(stream) => {
                 stream.pause();
@@ -234,6 +243,7 @@ impl Output {
             source_present: AtomicBool::new(false),
             app_volume: AtomicF32::new(1.0),
             track_gain: AtomicF32::new(1.0),
+            levels,
             follow_default: AtomicBool::new(true),
             default_watch: default_watch::DefaultDeviceWatcher::start(),
             play_intent: AtomicBool::new(false),
@@ -353,7 +363,13 @@ impl Output {
         let _ = self.take_current();
 
         let buffer = Arc::new(AudioRingBuffer::new(calc_buffer_size(&new_config)));
-        match exclusive::ExclusiveOutput::new(buffer, new_config, &device_uid, Some(orig_rate)) {
+        match exclusive::ExclusiveOutput::new(
+            buffer,
+            new_config,
+            &device_uid,
+            Some(orig_rate),
+            self.levels.clone(),
+        ) {
             Ok(excl) => {
                 if was_playing {
                     excl.resume();
@@ -393,7 +409,7 @@ impl Output {
             device,
         };
         let buffer = Arc::new(AudioRingBuffer::new(calc_buffer_size(&new_config)));
-        match CpalOutputStream::new(buffer, new_config, selected) {
+        match CpalOutputStream::new(buffer, new_config, selected, self.levels.clone()) {
             Ok(stream) => {
                 if was_playing {
                     stream.resume();
@@ -450,7 +466,7 @@ impl Output {
             device,
         };
         let buffer = Arc::new(AudioRingBuffer::new(calc_buffer_size(config)));
-        match CpalOutputStream::new(buffer, *config, selected) {
+        match CpalOutputStream::new(buffer, *config, selected, self.levels.clone()) {
             Ok(stream) => {
                 if resume_after {
                     stream.resume();
@@ -478,7 +494,7 @@ impl Output {
             device: Arc::new(device),
         };
         let buffer = Arc::new(AudioRingBuffer::new(calc_buffer_size(config)));
-        match CpalOutputStream::new(buffer, *config, selected) {
+        match CpalOutputStream::new(buffer, *config, selected, self.levels.clone()) {
             Ok(stream) => {
                 if resume_after {
                     stream.resume();
@@ -515,7 +531,13 @@ impl Output {
             let old = self.take_current();
             drop(old);
 
-            match exclusive::ExclusiveOutput::new(buffer, config, &device_uid, None) {
+            match exclusive::ExclusiveOutput::new(
+                buffer,
+                config,
+                &device_uid,
+                None,
+                self.levels.clone(),
+            ) {
                 Ok(excl) => {
                     if was_playing {
                         excl.resume();
@@ -643,6 +665,12 @@ impl Output {
         matches!(*self.current.read(), Some(OutputMode::Exclusive(_)))
     }
 
+    /// The levels the current stream is measuring, for views that react to the
+    /// music. Safe to hold across a stream swap: the handle outlives the stream.
+    pub fn levels(&self) -> Arc<Levels> {
+        self.levels.clone()
+    }
+
     pub fn source_format(&self) -> Option<(u32, u8)> {
         if !self.source_present.load(Ordering::Relaxed) {
             return None;
@@ -698,7 +726,13 @@ impl Output {
         if was_exclusive {
             let device_uid = self.device_manager.write().resolve_uid()?;
             let buffer = Arc::new(AudioRingBuffer::new(calc_buffer_size(&config)));
-            match exclusive::ExclusiveOutput::new(buffer, config, &device_uid, None) {
+            match exclusive::ExclusiveOutput::new(
+                buffer,
+                config,
+                &device_uid,
+                None,
+                self.levels.clone(),
+            ) {
                 Ok(excl) => {
                     if was_playing {
                         excl.resume();
@@ -719,7 +753,7 @@ impl Output {
                 device,
             };
             let buffer = Arc::new(AudioRingBuffer::new(calc_buffer_size(&config)));
-            match CpalOutputStream::new(buffer, config, selected) {
+            match CpalOutputStream::new(buffer, config, selected, self.levels.clone()) {
                 Ok(stream) => {
                     if was_playing {
                         stream.resume();

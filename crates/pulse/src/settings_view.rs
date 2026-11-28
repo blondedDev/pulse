@@ -46,6 +46,8 @@ pub struct SettingsSliders {
     pub lyrics: Entity<SliderState>,
     pub blur_intensity: Entity<SliderState>,
     pub blur_interface_opacity: Entity<SliderState>,
+    pub bass_strength: Entity<SliderState>,
+    pub bass_smoothing: Entity<SliderState>,
 }
 
 /// Build the list of `SettingPage`s for the Settings widget.
@@ -125,7 +127,13 @@ pub fn build_settings_pages(
     );
 
     let animations = pages.len();
-    pages.push(SettingPage::new(tr().settings_animations.clone()).group(animations_group()));
+    pages.push(
+        SettingPage::new(tr().settings_animations.clone()).group(animations_group(
+            cx.global::<SettingsStore>().bass_reaction().enabled,
+            sliders.bass_strength,
+            sliders.bass_smoothing,
+        )),
+    );
 
     let advanced = pages.len();
     pages.push(
@@ -973,7 +981,11 @@ fn version_group(updater: Entity<crate::updater::Updater>) -> SettingGroup {
 /// Pulse 5.0 is the animation release. This page exists now so the intention has
 /// a home, a name and a written anchor; it has no controls on purpose and
 /// nothing in the app depends on it.
-fn animations_group() -> SettingGroup {
+fn animations_group(
+    bass_enabled: bool,
+    bass_strength_slider: Entity<SliderState>,
+    bass_smoothing_slider: Entity<SliderState>,
+) -> SettingGroup {
     let mut group = SettingGroup::new()
         .title(tr().motion_group.clone())
         .item(
@@ -1022,6 +1034,82 @@ fn animations_group() -> SettingGroup {
                 }),
             )
             .description(kind.description()),
+        );
+    }
+
+    // The one animation here that follows the audio instead of the interface.
+    // Off by default: it moves to the music, which is not what everybody wants
+    // behind their covers.
+    group = group.item(
+        SettingItem::new(
+            tr().bass_reaction.clone(),
+            SettingField::render(|_window, cx: &mut App| {
+                h_flex().items_center().justify_end().child(
+                    Switch::new("bass-reaction")
+                        .checked(cx.global::<SettingsStore>().bass_reaction().enabled)
+                        .on_click(|new_val, _, cx| {
+                            let mut prefs = cx.global::<SettingsStore>().bass_reaction();
+                            prefs.enabled = *new_val;
+                            if let Err(e) =
+                                cx.global_mut::<SettingsStore>().set_bass_reaction(prefs)
+                            {
+                                notify_save_error(cx, e);
+                            }
+                        }),
+                )
+            }),
+        )
+        .description(tr().bass_reaction_desc.clone()),
+    );
+
+    if bass_enabled {
+        group = group.item(
+            SettingItem::new(
+                tr().bass_strength.clone(),
+                SettingField::render(move |_window, cx: &mut App| {
+                    let value = cx.global::<SettingsStore>().bass_reaction().strength;
+                    h_flex()
+                        .items_center()
+                        .gap_2()
+                        .justify_end()
+                        .child(
+                            div()
+                                .text_sm()
+                                .text_color(Colors::muted_foreground(cx))
+                                .child(format!("{} px", value.round() as i32)),
+                        )
+                        .child(
+                            div()
+                                .w(px(160.))
+                                .child(Slider::new(&bass_strength_slider)),
+                        )
+                }),
+            )
+            .description(tr().bass_strength_desc.clone()),
+        );
+        group = group.item(
+            SettingItem::new(
+                tr().bass_smoothing.clone(),
+                SettingField::render(move |_window, cx: &mut App| {
+                    let value = cx.global::<SettingsStore>().bass_reaction().smoothing;
+                    h_flex()
+                        .items_center()
+                        .gap_2()
+                        .justify_end()
+                        .child(
+                            div()
+                                .text_sm()
+                                .text_color(Colors::muted_foreground(cx))
+                                .child(format!("{}%", (value * 100.0).round() as i32)),
+                        )
+                        .child(
+                            div()
+                                .w(px(160.))
+                                .child(Slider::new(&bass_smoothing_slider)),
+                        )
+                }),
+            )
+            .description(tr().bass_smoothing_desc.clone()),
         );
     }
 

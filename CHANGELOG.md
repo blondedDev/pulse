@@ -8,6 +8,15 @@ Write for someone deciding whether to update: what changed, why it matters, and
 anything they have to do. Installation instructions do not belong here — the
 workflow appends them after the `---`.
 
+## Unreleased
+
+### Added
+
+- **Bass reaction.** In the full-screen cover view the artwork lifts with the
+  bass line, measured from the audio Pulse is playing. Off by default; Settings
+  → Animations → Bass reaction turns it on, with sliders for how far it travels
+  and how far behind the beat it drifts.
+
 ## 5.9.1 — 2026-11-26
 
 ### Added

@@ -70,6 +70,11 @@ pub struct CoverModeView {
     chrome_visible: bool,
     measured: Size<Pixels>,
     is_playing: bool,
+    /// How far the cover is currently lifted, in pixels. Smoothed towards the
+    /// bass reading so the movement follows the beat instead of the buffer.
+    bob: f32,
+    /// When `bob` was last advanced, so smoothing does not depend on frame rate.
+    bob_at: Instant,
     controls_shown: bool,
     controls_from: f32,
     controls_at: Instant,
@@ -247,6 +252,8 @@ impl CoverModeView {
             chrome_visible: true,
             measured: size(px(0.), px(0.)),
             is_playing,
+            bob: 0.0,
+            bob_at: Instant::now(),
             controls_shown: false,
             controls_from: 0.,
             controls_at: Instant::now(),
@@ -673,9 +680,13 @@ impl CoverModeView {
         h: f32,
         placeholder_bg: Hsla,
         placeholder_fg: Hsla,
+        lift: f32,
     ) -> Div {
         div()
             .relative()
+            // A paint offset, not a size: the title and controls below must not
+            // move with it, and the cover must not reflow 60 times a second.
+            .top(px(-lift))
             .w(px(w))
             .h(px(h))
             .rounded(px(COVER_RADIUS))
@@ -835,6 +846,34 @@ impl Render for CoverModeView {
                 )
         });
 
+        // Bass reaction. The level comes from the audio callback, so this is
+        // what is actually playing rather than what the UI thinks is playing.
+        // Only the settled cover lifts: two covers sliding past each other
+        // should not also be bobbing.
+        let reaction = cx.global::<SettingsStore>().bass_reaction();
+        let reacting = reaction.enabled && self.is_playing;
+        let target_lift = if reacting {
+            cx.global::<Services>().output.levels().bass() * reaction.strength
+        } else {
+            0.0
+        };
+        let now = Instant::now();
+        let dt = now.duration_since(self.bob_at).as_secs_f32().min(0.1);
+        self.bob_at = now;
+        // The slider is a time constant: 20 ms at zero (each kick lands) to
+        // 220 ms at the top (the cover drifts). Derived from dt so a dropped
+        // frame changes nothing but the frame.
+        let tau = 0.02 + reaction.smoothing.clamp(0.0, 1.0) * 0.2;
+        let approach = 1.0 - (-dt / tau).exp();
+        self.bob += (target_lift - self.bob) * approach;
+        // Keep drawing while the music plays, and until the cover has settled
+        // after it stops; without the second half a pause would leave it
+        // frozen mid-lift.
+        if reacting || self.bob > 0.01 {
+            window.request_animation_frame();
+        }
+        let lift = self.bob;
+
         let cover_square = if self.sliding {
             let forward = self.slide_forward;
             let slide_gap = (avail_w - cover_w) / 2. + COVER_SLIDE_GAP;
@@ -847,6 +886,7 @@ impl Render for CoverModeView {
                 cover_h,
                 placeholder_bg,
                 placeholder_fg,
+                0.0,
             )
             .shadow(shadow.clone());
             let incoming = Self::cover_layer(
@@ -856,6 +896,7 @@ impl Render for CoverModeView {
                 cover_h,
                 placeholder_bg,
                 placeholder_fg,
+                0.0,
             )
             .shadow(shadow.clone());
             let (first, second) = if forward {
@@ -894,6 +935,7 @@ impl Render for CoverModeView {
                 cover_h,
                 placeholder_bg,
                 placeholder_fg,
+                lift,
             )
             .shadow(shadow)
         };
